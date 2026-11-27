@@ -51,6 +51,13 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+              <queries>
+                  <intent>
+                      <action android:name="android.intent.action.MAIN" />
+                      <category android:name="android.intent.category.LAUNCHER" />
+                  </intent>
+              </queries>
+
               <application
                   android:label="Прицел"
                   android:icon="@android:drawable/ic_menu_mylocation">
@@ -60,9 +67,216 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
+                  <activity android:name=".AppPickerActivity" android:exported="false" />
+                  <activity android:name=".ExtrasActivity" android:exported="false" />
                   <service android:name=".OverlayService" android:exported="false" />
+                  <service android:name=".WidgetService" android:exported="false" />
+                  <service
+                      android:name=".AutoService"
+                      android:exported="false"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_config" />
+                  </service>
               </application>
           </manifest>
+          EOF
+          mkdir -p $(dirname app/src/main/java/com/example/crosshair/AppPickerActivity.java)
+          cat > app/src/main/java/com/example/crosshair/AppPickerActivity.java <<'EOF'
+          package com.example.crosshair;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.content.pm.PackageManager;
+          import android.content.pm.ResolveInfo;
+          import android.graphics.drawable.Drawable;
+          import android.os.Bundle;
+          import android.text.Editable;
+          import android.text.TextWatcher;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.ViewGroup;
+          import android.widget.BaseAdapter;
+          import android.widget.CheckBox;
+          import android.widget.EditText;
+          import android.widget.ImageView;
+          import android.widget.LinearLayout;
+          import android.widget.ListView;
+          import android.widget.TextView;
+
+          import java.util.ArrayList;
+          import java.util.Collections;
+          import java.util.Comparator;
+          import java.util.HashSet;
+          import java.util.List;
+          import java.util.Set;
+
+          public class AppPickerActivity extends Activity {
+              static class Item { String pkg; String label; Drawable icon; }
+
+              static class Holder { ImageView icon; TextView name; CheckBox cb; }
+
+              final List<Item> all = new ArrayList<>();
+              final List<Item> shown = new ArrayList<>();
+              Set<String> sel;
+              SharedPreferences sp;
+              BaseAdapter ad;
+
+              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
+
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  setTitle("Қолданбаларды таңдау");
+                  sp = getSharedPreferences("c", MODE_PRIVATE);
+                  sel = new HashSet<>(sp.getStringSet("apps", new HashSet<String>()));
+
+                  PackageManager pm = getPackageManager();
+                  Intent i = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+                  Set<String> seen = new HashSet<>();
+                  for (ResolveInfo r : pm.queryIntentActivities(i, 0)) {
+                      String p = r.activityInfo.packageName;
+                      if (p.equals(getPackageName()) || !seen.add(p)) continue;
+                      Item it = new Item();
+                      it.pkg = p;
+                      it.label = String.valueOf(r.loadLabel(pm));
+                      it.icon = r.loadIcon(pm);
+                      all.add(it);
+                  }
+                  Collections.sort(all, new Comparator<Item>() {
+                      @Override public int compare(Item a, Item c) { return a.label.compareToIgnoreCase(c.label); }
+                  });
+                  shown.addAll(all);
+
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  EditText search = new EditText(this);
+                  search.setHint("Іздеу...");
+                  search.setSingleLine(true);
+                  root.addView(search, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                  ListView lv = new ListView(this);
+                  root.addView(lv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+                  setContentView(root);
+
+                  ad = new BaseAdapter() {
+                      @Override public int getCount() { return shown.size(); }
+                      @Override public Object getItem(int pos) { return shown.get(pos); }
+                      @Override public long getItemId(int pos) { return pos; }
+                      @Override public View getView(int pos, View v, ViewGroup parent) {
+                          Holder h;
+                          if (v == null) {
+                              LinearLayout row = new LinearLayout(AppPickerActivity.this);
+                              row.setOrientation(LinearLayout.HORIZONTAL);
+                              row.setGravity(Gravity.CENTER_VERTICAL);
+                              row.setPadding(dp(12), dp(8), dp(12), dp(8));
+                              h = new Holder();
+                              h.icon = new ImageView(AppPickerActivity.this);
+                              row.addView(h.icon, new LinearLayout.LayoutParams(dp(40), dp(40)));
+                              h.name = new TextView(AppPickerActivity.this);
+                              h.name.setTextSize(16);
+                              h.name.setPadding(dp(12), 0, dp(12), 0);
+                              row.addView(h.name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                              h.cb = new CheckBox(AppPickerActivity.this);
+                              h.cb.setClickable(false);
+                              h.cb.setFocusable(false);
+                              row.addView(h.cb);
+                              row.setTag(h);
+                              v = row;
+                          } else {
+                              h = (Holder) v.getTag();
+                          }
+                          Item it = shown.get(pos);
+                          h.icon.setImageDrawable(it.icon);
+                          h.name.setText(it.label);
+                          h.cb.setChecked(sel.contains(it.pkg));
+                          return v;
+                      }
+                  };
+                  lv.setAdapter(ad);
+                  lv.setOnItemClickListener((parent, view, pos, id) -> {
+                      String p = shown.get(pos).pkg;
+                      if (!sel.remove(p)) sel.add(p);
+                      sp.edit().putStringSet("apps", new HashSet<>(sel)).apply();
+                      ad.notifyDataSetChanged();
+                  });
+
+                  search.addTextChangedListener(new TextWatcher() {
+                      @Override public void beforeTextChanged(CharSequence s, int a, int b2, int c) {}
+                      @Override public void onTextChanged(CharSequence s, int a, int b2, int c) {}
+                      @Override public void afterTextChanged(Editable s) {
+                          String q = s.toString().trim().toLowerCase();
+                          shown.clear();
+                          for (Item it : all) {
+                              if (q.isEmpty() || it.label.toLowerCase().contains(q)) shown.add(it);
+                          }
+                          ad.notifyDataSetChanged();
+                      }
+                  });
+              }
+          }
+          EOF
+          mkdir -p $(dirname app/src/main/java/com/example/crosshair/AutoService.java)
+          cat > app/src/main/java/com/example/crosshair/AutoService.java <<'EOF'
+          package com.example.crosshair;
+
+          import android.accessibilityservice.AccessibilityService;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.view.accessibility.AccessibilityEvent;
+          import android.view.inputmethod.InputMethodInfo;
+          import android.view.inputmethod.InputMethodManager;
+
+          import java.util.HashSet;
+          import java.util.Set;
+
+          public class AutoService extends AccessibilityService {
+              static boolean shownByAuto = false;
+
+              @Override
+              public void onAccessibilityEvent(AccessibilityEvent e) {
+                  if (e.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || e.getPackageName() == null) return;
+                  SharedPreferences sp = getSharedPreferences("c", MODE_PRIVATE);
+                  if (!sp.getBoolean("auto", true)) return;
+
+                  String pkg = e.getPackageName().toString();
+                  String cn = e.getClassName() == null ? "" : e.getClassName().toString();
+                  if (pkg.equals(getPackageName()) || pkg.equals("com.android.systemui")) return;
+                  if (cn.startsWith("android.widget.") || cn.startsWith("android.view.")) return;
+                  if (isIme(pkg)) return;
+
+                  Set<String> apps = sp.getStringSet("apps", new HashSet<String>());
+                  if (!OverlayService.running) shownByAuto = false;
+
+                  if (apps.contains(pkg)) {
+                      if (!OverlayService.running) {
+                          try {
+                              startForegroundService(new Intent(this, OverlayService.class));
+                              shownByAuto = true;
+                          } catch (Exception ignored) {}
+                      }
+                  } else if (shownByAuto && OverlayService.running) {
+                      stopService(new Intent(this, OverlayService.class));
+                      shownByAuto = false;
+                  }
+              }
+
+              boolean isIme(String pkg) {
+                  try {
+                      InputMethodManager m = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                      for (InputMethodInfo i : m.getEnabledInputMethodList()) {
+                          if (i.getPackageName().equals(pkg)) return true;
+                      }
+                  } catch (Exception ignored) {}
+                  return false;
+              }
+
+              @Override public void onInterrupt() {}
+          }
           EOF
           mkdir -p $(dirname app/src/main/java/com/example/crosshair/CrosshairView.java)
           cat > app/src/main/java/com/example/crosshair/CrosshairView.java <<'EOF'
@@ -72,61 +286,300 @@ jobs:
           import android.graphics.Canvas;
           import android.graphics.Color;
           import android.graphics.Paint;
+          import android.graphics.Path;
           import android.view.View;
 
           public class CrosshairView extends View {
-              public static final int TYPES = 5;
+              public static final String[] NAMES = {
+                      "Нүкте", "Крест", "Шеңбер", "Шеңбер+нүкте", "X", "Тұтас плюс", "Крест+нүкте",
+                      "T-тәрізді", "Шаршы", "Ромб", "Үшбұрыш", "Шеңбер+крест", "Төрт нүкте", "Шеврон"
+              };
+              public static final int TYPES = NAMES.length;
+
               private int type = 1, color = Color.RED;
+              private float scale = 1f;
               private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
               private final float d;
 
               public CrosshairView(Context c) {
                   super(c);
                   d = c.getResources().getDisplayMetrics().density;
+                  p.setStrokeCap(Paint.Cap.ROUND);
+                  p.setStrokeJoin(Paint.Join.ROUND);
               }
 
-              public void set(int t, int col) { type = t; color = col; invalidate(); }
+              public void set(int t, int col, float sc) {
+                  type = t; color = col; scale = sc;
+                  requestLayout();
+                  invalidate();
+              }
 
               @Override
               protected void onMeasure(int w, int h) {
-                  int s = (int) (120 * d);
+                  int s = (int) (120 * d * scale);
                   setMeasuredDimension(s, s);
               }
 
               @Override
               protected void onDraw(Canvas c) {
+                  float u = getWidth() / 120f;
                   float cx = getWidth() / 2f, cy = getHeight() / 2f;
-                  float g = 6 * d, l = 28 * d, r = 30 * d;
+                  float g = 6 * u, l = 28 * u, r = 30 * u;
                   p.setColor(color);
-                  p.setStrokeWidth(2 * d);
+                  p.setStrokeWidth(2 * u);
+                  p.setStyle(Paint.Style.STROKE);
                   switch (type) {
-                      case 0: // нүкте
+                      case 0: {
                           p.setStyle(Paint.Style.FILL);
-                          c.drawCircle(cx, cy, 4 * d, p);
+                          c.drawCircle(cx, cy, 4 * u, p);
                           break;
-                      case 1: // крест (ортасы бос)
+                      }
+                      case 1: {
                           c.drawLine(cx - l, cy, cx - g, cy, p);
                           c.drawLine(cx + g, cy, cx + l, cy, p);
                           c.drawLine(cx, cy - l, cx, cy - g, p);
                           c.drawLine(cx, cy + g, cx, cy + l, p);
                           break;
-                      case 2: // шеңбер
-                          p.setStyle(Paint.Style.STROKE);
+                      }
+                      case 2: {
                           c.drawCircle(cx, cy, r, p);
                           break;
-                      case 3: // шеңбер + нүкте
-                          p.setStyle(Paint.Style.STROKE);
+                      }
+                      case 3: {
                           c.drawCircle(cx, cy, r, p);
                           p.setStyle(Paint.Style.FILL);
-                          c.drawCircle(cx, cy, 3 * d, p);
+                          c.drawCircle(cx, cy, 3 * u, p);
                           break;
-                      case 4: // X
+                      }
+                      case 4: {
                           c.drawLine(cx - l, cy - l, cx - g, cy - g, p);
                           c.drawLine(cx + g, cy + g, cx + l, cy + l, p);
                           c.drawLine(cx + l, cy - l, cx + g, cy - g, p);
                           c.drawLine(cx - g, cy + g, cx - l, cy + l, p);
                           break;
+                      }
+                      case 5: {
+                          c.drawLine(cx - l, cy, cx + l, cy, p);
+                          c.drawLine(cx, cy - l, cx, cy + l, p);
+                          break;
+                      }
+                      case 6: {
+                          c.drawLine(cx - l, cy, cx - g, cy, p);
+                          c.drawLine(cx + g, cy, cx + l, cy, p);
+                          c.drawLine(cx, cy - l, cx, cy - g, p);
+                          c.drawLine(cx, cy + g, cx, cy + l, p);
+                          p.setStyle(Paint.Style.FILL);
+                          c.drawCircle(cx, cy, 2.5f * u, p);
+                          break;
+                      }
+                      case 7: {
+                          c.drawLine(cx - l, cy, cx + l, cy, p);
+                          c.drawLine(cx, cy, cx, cy + l, p);
+                          break;
+                      }
+                      case 8: {
+                          float h = 22 * u;
+                          c.drawRect(cx - h, cy - h, cx + h, cy + h, p);
+                          break;
+                      }
+                      case 9: {
+                          Path q = new Path();
+                          q.moveTo(cx, cy - r);
+                          q.lineTo(cx + r, cy);
+                          q.lineTo(cx, cy + r);
+                          q.lineTo(cx - r, cy);
+                          q.close();
+                          c.drawPath(q, p);
+                          break;
+                      }
+                      case 10: {
+                          Path q = new Path();
+                          q.moveTo(cx, cy - r);
+                          q.lineTo(cx + r, cy + r * 0.8f);
+                          q.lineTo(cx - r, cy + r * 0.8f);
+                          q.close();
+                          c.drawPath(q, p);
+                          break;
+                      }
+                      case 11: {
+                          c.drawCircle(cx, cy, 22 * u, p);
+                          float e = 36 * u;
+                          c.drawLine(cx - e, cy, cx - g, cy, p);
+                          c.drawLine(cx + g, cy, cx + e, cy, p);
+                          c.drawLine(cx, cy - e, cx, cy - g, p);
+                          c.drawLine(cx, cy + g, cx, cy + e, p);
+                          break;
+                      }
+                      case 12: {
+                          p.setStyle(Paint.Style.FILL);
+                          float o = 20 * u;
+                          c.drawCircle(cx - o, cy, 3 * u, p);
+                          c.drawCircle(cx + o, cy, 3 * u, p);
+                          c.drawCircle(cx, cy - o, 3 * u, p);
+                          c.drawCircle(cx, cy + o, 3 * u, p);
+                          break;
+                      }
+                      case 13: {
+                          Path q = new Path();
+                          q.moveTo(cx - 20 * u, cy + 8 * u);
+                          q.lineTo(cx, cy - 12 * u);
+                          q.lineTo(cx + 20 * u, cy + 8 * u);
+                          c.drawPath(q, p);
+                          break;
+                      }
                   }
+              }
+          }
+          EOF
+          mkdir -p $(dirname app/src/main/java/com/example/crosshair/ExtrasActivity.java)
+          cat > app/src/main/java/com/example/crosshair/ExtrasActivity.java <<'EOF'
+          package com.example.crosshair;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.view.ViewGroup;
+          import android.widget.Button;
+          import android.widget.CheckBox;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.SeekBar;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          public class ExtrasActivity extends Activity {
+              static final String[] POS = {"Сол жақ жоғары", "Оң жақ жоғары", "Сол жақ төмен", "Оң жақ төмен"};
+
+              SharedPreferences sp;
+              Button master, posBtn;
+              TextView sizeLabel;
+
+              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
+
+              TextView head(String t) {
+                  TextView tv = new TextView(this);
+                  tv.setText(t);
+                  tv.setTextSize(20);
+                  tv.setPadding(0, dp(18), 0, dp(6));
+                  return tv;
+              }
+
+              CheckBox check(String t, final String key) {
+                  CheckBox cb = new CheckBox(this);
+                  cb.setText(t);
+                  cb.setChecked(sp.getBoolean(key, true));
+                  cb.setOnCheckedChangeListener((b, c) -> {
+                      sp.edit().putBoolean(key, c).apply();
+                      refresh();
+                  });
+                  return cb;
+              }
+
+              void refresh() {
+                  if (WidgetService.running) {
+                      startService(new Intent(this, WidgetService.class).setAction(WidgetService.ACTION_REFRESH));
+                  }
+              }
+
+              void updateMaster() {
+                  master.setText(WidgetService.running ? "■ Виджеттерді өшіру" : "▶ Виджеттерді қосу");
+              }
+
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  setTitle("Қосымша");
+                  sp = getSharedPreferences("c", MODE_PRIVATE);
+
+                  LinearLayout l = new LinearLayout(this);
+                  l.setOrientation(LinearLayout.VERTICAL);
+                  l.setPadding(dp(20), dp(20), dp(20), dp(20));
+
+                  TextView title = new TextView(this);
+                  title.setText("Қосымша");
+                  title.setTextSize(26);
+                  l.addView(title);
+
+                  // ---------- Виджеттер ----------
+                  l.addView(head("📊 Виджеттер"));
+                  l.addView(check("🕒 Сағат", "w_clock"));
+                  l.addView(check("🔋 Батарея (% және температура)", "w_batt"));
+                  l.addView(check("⬇⬆ Интернет жылдамдығы", "w_net"));
+
+                  posBtn = new Button(this);
+                  posBtn.setAllCaps(false);
+                  posBtn.setText("Орны: " + POS[sp.getInt("w_pos", 1) % 4]);
+                  posBtn.setOnClickListener(v -> {
+                      int p = (sp.getInt("w_pos", 1) + 1) % 4;
+                      sp.edit().putInt("w_pos", p).apply();
+                      posBtn.setText("Орны: " + POS[p]);
+                      refresh();
+                  });
+                  l.addView(posBtn);
+
+                  sizeLabel = new TextView(this);
+                  sizeLabel.setText("Мәтін өлшемі: " + sp.getInt("w_size", 13));
+                  l.addView(sizeLabel);
+                  SeekBar sb = new SeekBar(this);
+                  sb.setMax(14);
+                  sb.setProgress(sp.getInt("w_size", 13) - 10);
+                  sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                      @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                          sizeLabel.setText("Мәтін өлшемі: " + (p + 10));
+                          if (fromUser) sp.edit().putInt("w_size", p + 10).apply();
+                      }
+                      @Override public void onStartTrackingTouch(SeekBar s) {}
+                      @Override public void onStopTrackingTouch(SeekBar s) { refresh(); }
+                  });
+                  l.addView(sb);
+
+                  master = new Button(this);
+                  master.setAllCaps(false);
+                  master.setOnClickListener(v -> {
+                      if (WidgetService.running) {
+                          stopService(new Intent(this, WidgetService.class));
+                          master.setText("▶ Виджеттерді қосу");
+                          return;
+                      }
+                      if (!Settings.canDrawOverlays(this)) {
+                          Toast.makeText(this, "Басқа қолданбалардың үстінен көрсетуге рұқсат беріңіз", Toast.LENGTH_LONG).show();
+                          startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                  Uri.parse("package:" + getPackageName())));
+                          return;
+                      }
+                      if (!sp.getBoolean("w_clock", true) && !sp.getBoolean("w_batt", true) && !sp.getBoolean("w_net", true)) {
+                          Toast.makeText(this, "Кемінде бір виджетті таңдаңыз", Toast.LENGTH_SHORT).show();
+                          return;
+                      }
+                      startForegroundService(new Intent(this, WidgetService.class));
+                      master.setText("■ Виджеттерді өшіру");
+                  });
+                  l.addView(master);
+
+                  TextView note = new TextView(this);
+                  note.setText("Виджеттер қосылғанда 2-ші хабарлама шығады (прицелдің хабарламасынан бөлек).");
+                  note.setTextSize(13);
+                  note.setPadding(0, dp(6), 0, 0);
+                  l.addView(note);
+
+                  // ---------- Болашақ функциялар осында қосылады ----------
+                  l.addView(head("➕ Жақында"));
+                  TextView soon = new TextView(this);
+                  soon.setText("Жаңа функциялар осы бөлімге қосылады.");
+                  l.addView(soon);
+
+                  ScrollView sv = new ScrollView(this);
+                  sv.addView(l, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                  setContentView(sv);
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  updateMaster();
               }
           }
           EOF
@@ -137,30 +590,50 @@ jobs:
           import android.Manifest;
           import android.app.Activity;
           import android.content.Intent;
+          import android.content.SharedPreferences;
           import android.net.Uri;
           import android.os.Build;
           import android.os.Bundle;
           import android.provider.Settings;
-          import android.view.Gravity;
+          import android.view.ViewGroup;
           import android.widget.Button;
+          import android.widget.CheckBox;
           import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
           import android.widget.Toast;
 
+          import java.util.HashSet;
+
           public class MainActivity extends Activity {
+              TextView status;
+              SharedPreferences sp;
+
+              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
+
+              Button btn(String t, android.view.View.OnClickListener l) {
+                  Button b = new Button(this);
+                  b.setText(t);
+                  b.setAllCaps(false);
+                  b.setOnClickListener(l);
+                  return b;
+              }
+
               @Override
               protected void onCreate(Bundle b) {
                   super.onCreate(b);
-                  LinearLayout l = new LinearLayout(this);
-                  l.setGravity(Gravity.CENTER);
-                  Button btn = new Button(this);
-                  btn.setText("Прицелді қосу");
-                  l.addView(btn);
-                  setContentView(l);
+                  sp = getSharedPreferences("c", MODE_PRIVATE);
 
-                  if (Build.VERSION.SDK_INT >= 33) {
-                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
-                  }
-                  btn.setOnClickListener(v -> {
+                  LinearLayout l = new LinearLayout(this);
+                  l.setOrientation(LinearLayout.VERTICAL);
+                  l.setPadding(dp(20), dp(30), dp(20), dp(20));
+
+                  TextView title = new TextView(this);
+                  title.setText("Прицел");
+                  title.setTextSize(26);
+                  l.addView(title);
+
+                  l.addView(btn("▶ Прицелді қосу", v -> {
                       if (!Settings.canDrawOverlays(this)) {
                           Toast.makeText(this, "Басқа қолданбалардың үстінен көрсетуге рұқсат беріңіз", Toast.LENGTH_LONG).show();
                           startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -168,8 +641,58 @@ jobs:
                           return;
                       }
                       startForegroundService(new Intent(this, OverlayService.class));
-                      finish();
-                  });
+                      Toast.makeText(this, "Прицел қосылды", Toast.LENGTH_SHORT).show();
+                  }));
+
+                  l.addView(btn("■ Прицелді өшіру", v -> stopService(new Intent(this, OverlayService.class))));
+
+                  l.addView(btn("📱 Қолданбаларды таңдау", v ->
+                          startActivity(new Intent(this, AppPickerActivity.class))));
+
+                  l.addView(btn("➕ Қосымша", v ->
+                          startActivity(new Intent(this, ExtrasActivity.class))));
+
+                  CheckBox auto = new CheckBox(this);
+                  auto.setText("Авто режим: таңдалған қолданбаға кіргенде прицел өзі қосылады");
+                  auto.setChecked(sp.getBoolean("auto", true));
+                  auto.setOnCheckedChangeListener((cb, checked) -> sp.edit().putBoolean("auto", checked).apply());
+                  l.addView(auto);
+
+                  l.addView(btn("♿ Авто режимге рұқсат беру", v ->
+                          startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))));
+
+                  TextView note = new TextView(this);
+                  note.setText("Ашылған тізімнен «Прицел» қолданбасын тауып қосыңыз. Рұқсат бұғатталса: "
+                          + "Параметрлер → Қолданбалар → Прицел → ⋮ (үш нүкте) → «Шектелген параметрлерге рұқсат беру», "
+                          + "содан кейін қайта қосыңыз.");
+                  note.setTextSize(13);
+                  l.addView(note);
+
+                  status = new TextView(this);
+                  status.setTextSize(15);
+                  status.setPadding(0, dp(16), 0, 0);
+                  l.addView(status);
+
+                  ScrollView sv = new ScrollView(this);
+                  sv.addView(l, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                  setContentView(sv);
+
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+                  }
+              }
+
+              boolean accOn() {
+                  String s = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+                  return s != null && s.contains(getPackageName() + "/") && s.contains("AutoService");
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  int n = sp.getStringSet("apps", new HashSet<String>()).size();
+                  status.setText("Таңдалған қолданба: " + n + "\nАрнайы мүмкіндік рұқсаты: "
+                          + (accOn() ? "қосулы ✅" : "өшірулі ❌"));
               }
           }
           EOF
@@ -182,7 +705,6 @@ jobs:
           import android.app.NotificationManager;
           import android.app.PendingIntent;
           import android.app.Service;
-          import android.content.Context;
           import android.content.Intent;
           import android.content.SharedPreferences;
           import android.graphics.Color;
@@ -195,13 +717,19 @@ jobs:
           import android.view.WindowManager;
           import android.widget.Button;
           import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.SeekBar;
           import android.widget.TextView;
+
+          import java.util.function.IntConsumer;
 
           public class OverlayService extends Service {
               static final String ACTION_MOVE = "com.example.crosshair.MOVE";
               static final String ACTION_STOP = "com.example.crosshair.STOP";
+              static final String ACTION_NEXT = "com.example.crosshair.NEXT";
               static final String CH = "crosshair";
-              static final int[] COLORS = {Color.RED, Color.GREEN, Color.CYAN, Color.YELLOW, Color.WHITE};
+              static final int[] COLORS = {Color.RED, Color.GREEN, Color.CYAN, Color.YELLOW, Color.WHITE, Color.MAGENTA};
+              static boolean running = false;
 
               WindowManager wm;
               NotificationManager nm;
@@ -209,24 +737,28 @@ jobs:
               CrosshairView cross;
               WindowManager.LayoutParams cp, mp;
               View menu;
-              TextView stepLabel;
+              TextView stepLabel, typeLabel, sizeLabel, alphaLabel;
               boolean menuShown = false;
-              int step = 5, type, color;
+              int step = 5, type, color, size, alpha;
 
               @Override public IBinder onBind(Intent i) { return null; }
 
               @Override
               public void onCreate() {
                   super.onCreate();
+                  running = true;
                   wm = (WindowManager) getSystemService(WINDOW_SERVICE);
                   nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
                   nm.createNotificationChannel(new NotificationChannel(CH, "Прицел", NotificationManager.IMPORTANCE_LOW));
                   sp = getSharedPreferences("c", MODE_PRIVATE);
                   type = sp.getInt("type", 1);
                   color = sp.getInt("color", Color.RED);
+                  size = sp.getInt("size", 100);
+                  alpha = sp.getInt("alpha", 100);
 
                   cross = new CrosshairView(this);
-                  cross.set(type, color);
+                  cross.set(type, color, size / 100f);
+                  cross.setAlpha(alpha / 100f);
                   cp = new WindowManager.LayoutParams(
                           WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
                           WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -257,6 +789,7 @@ jobs:
                       }
                   });
                   buildMenu();
+                  apply();
               }
 
               @Override
@@ -268,24 +801,28 @@ jobs:
                       stopSelf();
                   } else if (ACTION_MOVE.equals(a)) {
                       toggleMenu();
+                  } else if (ACTION_NEXT.equals(a)) {
+                      type = (type + 1) % CrosshairView.TYPES;
+                      apply();
                   }
                   return START_STICKY;
               }
 
               // ---------- Хабарлама ----------
+              PendingIntent act(int code, String action) {
+                  return PendingIntent.getService(this, code,
+                          new Intent(this, OverlayService.class).setAction(action),
+                          PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+              }
+
               Notification buildNotification() {
-                  PendingIntent mv = PendingIntent.getService(this, 1,
-                          new Intent(this, OverlayService.class).setAction(ACTION_MOVE),
-                          PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-                  PendingIntent st = PendingIntent.getService(this, 2,
-                          new Intent(this, OverlayService.class).setAction(ACTION_STOP),
-                          PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
                   return new Notification.Builder(this, CH)
                           .setSmallIcon(android.R.drawable.ic_menu_mylocation)
                           .setContentTitle("Прицел қосулы")
                           .setOngoing(true)
-                          .addAction(android.R.drawable.ic_menu_edit, menuShown ? "Жылжытуды жабу" : "Жылжыту", mv)
-                          .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Өшіру", st)
+                          .addAction(android.R.drawable.ic_menu_edit, menuShown ? "Жылжытуды жабу" : "Жылжыту", act(1, ACTION_MOVE))
+                          .addAction(android.R.drawable.ic_media_next, "Түрі ▶", act(3, ACTION_NEXT))
+                          .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Өшіру", act(2, ACTION_STOP))
                           .build();
               }
 
@@ -300,7 +837,7 @@ jobs:
                       cp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                   }
                   wm.updateViewLayout(cross, cp);
-                  nm.notify(1, buildNotification()); // батырма мәтінін жаңарту
+                  nm.notify(1, buildNotification());
               }
 
               int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
@@ -309,9 +846,19 @@ jobs:
                   Button b = new Button(this);
                   b.setText(t);
                   b.setAllCaps(false);
-                  b.setMinWidth(0); b.setMinimumWidth(0);
+                  b.setMinWidth(0);
+                  b.setMinimumWidth(0);
                   b.setOnClickListener(l);
                   return b;
+              }
+
+              TextView label(String t) {
+                  TextView tv = new TextView(this);
+                  tv.setText(t);
+                  tv.setTextColor(Color.WHITE);
+                  tv.setGravity(Gravity.CENTER);
+                  tv.setPadding(0, dp(6), 0, 0);
+                  return tv;
               }
 
               LinearLayout row() {
@@ -319,6 +866,20 @@ jobs:
                   r.setOrientation(LinearLayout.HORIZONTAL);
                   r.setGravity(Gravity.CENTER);
                   return r;
+              }
+
+              SeekBar seek(final int min, int max, int val, final IntConsumer c) {
+                  SeekBar sb = new SeekBar(this);
+                  sb.setMax(max - min);
+                  sb.setProgress(val - min);
+                  sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                      @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                          if (fromUser) c.accept(p + min);
+                      }
+                      @Override public void onStartTrackingTouch(SeekBar s) {}
+                      @Override public void onStopTrackingTouch(SeekBar s) {}
+                  });
+                  return sb;
               }
 
               void buildMenu() {
@@ -331,18 +892,16 @@ jobs:
                   root.setBackground(bg);
 
                   mp = new WindowManager.LayoutParams(
-                          WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                          dp(280), getResources().getDisplayMetrics().heightPixels * 7 / 10,
                           WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                           WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
                   mp.gravity = Gravity.TOP | Gravity.START;
-                  mp.x = dp(16); mp.y = dp(120);
+                  mp.x = dp(16);
+                  mp.y = dp(60);
 
-                  // меню тақырыбы: осыдан сүйреп менюді жылжытуға болады
-                  TextView title = new TextView(this);
-                  title.setText("✥ Прицел (осыдан сүйреңіз)");
-                  title.setTextColor(Color.WHITE);
-                  title.setGravity(Gravity.CENTER);
-                  title.setPadding(0, dp(6), 0, dp(6));
+                  // тақырып: осыдан сүйреп менюді жылжытуға болады
+                  TextView title = label("✥ Прицел (осыдан сүйреңіз)");
+                  title.setPadding(0, dp(8), 0, dp(8));
                   title.setOnTouchListener(new View.OnTouchListener() {
                       float dx, dy; int sx, sy;
                       @Override public boolean onTouch(View v, MotionEvent e) {
@@ -361,6 +920,8 @@ jobs:
                   root.addView(title);
 
                   // түрі
+                  typeLabel = label("");
+                  root.addView(typeLabel);
                   LinearLayout r1 = row();
                   r1.addView(btn("◀ Түрі", v -> { type = (type + CrosshairView.TYPES - 1) % CrosshairView.TYPES; apply(); }));
                   r1.addView(btn("Түрі ▶", v -> { type = (type + 1) % CrosshairView.TYPES; apply(); }));
@@ -371,17 +932,24 @@ jobs:
                   for (int c : COLORS) {
                       Button b = btn("", v -> { color = c; apply(); });
                       b.setBackgroundColor(c);
-                      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(40), dp(40));
-                      lp.setMargins(dp(3), dp(6), dp(3), dp(6));
+                      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(36), dp(36));
+                      lp.setMargins(dp(2), dp(6), dp(2), dp(6));
                       r2.addView(b, lp);
                   }
                   root.addView(r2);
 
+                  // өлшемі
+                  sizeLabel = label("");
+                  root.addView(sizeLabel);
+                  root.addView(seek(30, 300, size, v -> { size = v; apply(); }));
+
+                  // мөлдірлік
+                  alphaLabel = label("");
+                  root.addView(alphaLabel);
+                  root.addView(seek(20, 100, alpha, v -> { alpha = v; apply(); }));
+
                   // қадам
-                  stepLabel = new TextView(this);
-                  stepLabel.setTextColor(Color.WHITE);
-                  stepLabel.setGravity(Gravity.CENTER);
-                  stepLabel.setText("Қадам: " + step + " px");
+                  stepLabel = label("Қадам: " + step + " px");
                   root.addView(stepLabel);
                   LinearLayout r3 = row();
                   for (int s : new int[]{1, 5, 10, 25}) {
@@ -400,29 +968,236 @@ jobs:
                   root.addView(mid);
 
                   root.addView(btn("Орталыққа қайтару", v -> { cp.x = 0; cp.y = 0; wm.updateViewLayout(cross, cp); savePos(); }));
-                  menu = root;
+
+                  ScrollView sv = new ScrollView(this);
+                  sv.addView(root);
+                  menu = sv;
               }
 
               void move(int dx, int dy) {
-                  cp.x += dx; cp.y += dy;
+                  cp.x += dx;
+                  cp.y += dy;
                   wm.updateViewLayout(cross, cp);
                   savePos();
               }
 
               void apply() {
-                  cross.set(type, color);
-                  sp.edit().putInt("type", type).putInt("color", color).apply();
+                  cross.set(type, color, size / 100f);
+                  cross.setAlpha(alpha / 100f);
+                  try { wm.updateViewLayout(cross, cp); } catch (Exception ignored) {}
+                  if (typeLabel != null) typeLabel.setText("Түрі: " + CrosshairView.NAMES[type] + " (" + (type + 1) + "/" + CrosshairView.TYPES + ")");
+                  if (sizeLabel != null) sizeLabel.setText("Өлшемі: " + size + "%");
+                  if (alphaLabel != null) alphaLabel.setText("Мөлдірлік: " + alpha + "%");
+                  sp.edit().putInt("type", type).putInt("color", color).putInt("size", size).putInt("alpha", alpha).apply();
               }
 
               void savePos() { sp.edit().putInt("x", cp.x).putInt("y", cp.y).apply(); }
 
               @Override
               public void onDestroy() {
+                  running = false;
                   try { wm.removeView(cross); } catch (Exception ignored) {}
                   if (menuShown) { try { wm.removeView(menu); } catch (Exception ignored) {} }
                   super.onDestroy();
               }
           }
+          EOF
+          mkdir -p $(dirname app/src/main/java/com/example/crosshair/WidgetService.java)
+          cat > app/src/main/java/com/example/crosshair/WidgetService.java <<'EOF'
+          package com.example.crosshair;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Intent;
+          import android.content.IntentFilter;
+          import android.content.SharedPreferences;
+          import android.graphics.Color;
+          import android.graphics.PixelFormat;
+          import android.graphics.drawable.GradientDrawable;
+          import android.net.TrafficStats;
+          import android.os.BatteryManager;
+          import android.os.Handler;
+          import android.os.IBinder;
+          import android.os.Looper;
+          import android.os.SystemClock;
+          import android.util.TypedValue;
+          import android.view.Gravity;
+          import android.view.WindowManager;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
+          import java.text.SimpleDateFormat;
+          import java.util.Date;
+          import java.util.Locale;
+
+          public class WidgetService extends Service {
+              static final String ACTION_STOP = "com.example.crosshair.WSTOP";
+              static final String ACTION_REFRESH = "com.example.crosshair.WREFRESH";
+              static final String CH = "widgets";
+              static boolean running = false;
+
+              WindowManager wm;
+              NotificationManager nm;
+              SharedPreferences sp;
+              LinearLayout panel;
+              TextView tClock, tBatt, tNet;
+              final Handler h = new Handler(Looper.getMainLooper());
+              long lastRx, lastTx, lastT;
+              final SimpleDateFormat fmt = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+
+              final Runnable tick = new Runnable() {
+                  @Override public void run() {
+                      update();
+                      h.postDelayed(this, 1000);
+                  }
+              };
+
+              @Override public IBinder onBind(Intent i) { return null; }
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  running = true;
+                  wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                  nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                  nm.createNotificationChannel(new NotificationChannel(CH, "Виджеттер", NotificationManager.IMPORTANCE_LOW));
+                  sp = getSharedPreferences("c", MODE_PRIVATE);
+                  lastRx = TrafficStats.getTotalRxBytes();
+                  lastTx = TrafficStats.getTotalTxBytes();
+                  lastT = SystemClock.elapsedRealtime();
+                  build();
+                  h.post(tick);
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  startForeground(2, buildNotification());
+                  String a = intent == null ? null : intent.getAction();
+                  if (ACTION_STOP.equals(a)) {
+                      stopForeground(true);
+                      stopSelf();
+                  } else if (ACTION_REFRESH.equals(a)) {
+                      build();
+                      update();
+                  }
+                  return START_STICKY;
+              }
+
+              Notification buildNotification() {
+                  PendingIntent st = PendingIntent.getService(this, 20,
+                          new Intent(this, WidgetService.class).setAction(ACTION_STOP),
+                          PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                  return new Notification.Builder(this, CH)
+                          .setSmallIcon(android.R.drawable.ic_menu_info_details)
+                          .setContentTitle("Виджеттер қосулы")
+                          .setOngoing(true)
+                          .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Өшіру", st)
+                          .build();
+              }
+
+              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
+
+              TextView tv(int sizeSp) {
+                  TextView t = new TextView(this);
+                  t.setTextColor(Color.WHITE);
+                  t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp);
+                  t.setTypeface(android.graphics.Typeface.MONOSPACE);
+                  return t;
+              }
+
+              void build() {
+                  if (panel != null) {
+                      try { wm.removeView(panel); } catch (Exception ignored) {}
+                  }
+                  int sz = sp.getInt("w_size", 13);
+                  int pos = sp.getInt("w_pos", 1);
+
+                  panel = new LinearLayout(this);
+                  panel.setOrientation(LinearLayout.VERTICAL);
+                  panel.setPadding(dp(8), dp(4), dp(8), dp(4));
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setColor(0x99000000);
+                  bg.setCornerRadius(dp(8));
+                  panel.setBackground(bg);
+
+                  tClock = null; tBatt = null; tNet = null;
+                  if (sp.getBoolean("w_clock", true)) { tClock = tv(sz); panel.addView(tClock); }
+                  if (sp.getBoolean("w_batt", true)) { tBatt = tv(sz); panel.addView(tBatt); }
+                  if (sp.getBoolean("w_net", true)) { tNet = tv(sz); panel.addView(tNet); }
+
+                  WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                          WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                          PixelFormat.TRANSLUCENT);
+                  int[] g = {Gravity.TOP | Gravity.START, Gravity.TOP | Gravity.END,
+                          Gravity.BOTTOM | Gravity.START, Gravity.BOTTOM | Gravity.END};
+                  lp.gravity = g[pos % 4];
+                  lp.x = dp(8);
+                  lp.y = (pos < 2) ? dp(30) : dp(40);
+                  wm.addView(panel, lp);
+              }
+
+              String speed(float bps) {
+                  if (bps >= 1024 * 1024) return String.format(Locale.US, "%.1f MB/s", bps / 1048576f);
+                  return String.format(Locale.US, "%.0f KB/s", bps / 1024f);
+              }
+
+              void update() {
+                  if (tClock != null) tClock.setText("🕒 " + fmt.format(new Date()));
+
+                  if (tBatt != null) {
+                      Intent b = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                      if (b != null) {
+                          int level = b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                          int scale = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+                          int status = b.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+                          float temp = b.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) / 10f;
+                          boolean ch = status == BatteryManager.BATTERY_STATUS_CHARGING
+                                  || status == BatteryManager.BATTERY_STATUS_FULL;
+                          int pct = scale > 0 ? level * 100 / scale : level;
+                          tBatt.setText("🔋 " + pct + "%" + (ch ? " ⚡" : "") + " " + String.format(Locale.US, "%.0f°C", temp));
+                      }
+                  }
+
+                  long now = SystemClock.elapsedRealtime();
+                  long rx = TrafficStats.getTotalRxBytes();
+                  long tx = TrafficStats.getTotalTxBytes();
+                  float dt = (now - lastT) / 1000f;
+                  if (tNet != null && dt > 0 && rx != TrafficStats.UNSUPPORTED && tx != TrafficStats.UNSUPPORTED) {
+                      tNet.setText("⬇ " + speed((rx - lastRx) / dt) + "\n⬆ " + speed((tx - lastTx) / dt));
+                  }
+                  lastRx = rx; lastTx = tx; lastT = now;
+              }
+
+              @Override
+              public void onDestroy() {
+                  running = false;
+                  h.removeCallbacks(tick);
+                  if (panel != null) {
+                      try { wm.removeView(panel); } catch (Exception ignored) {}
+                  }
+                  super.onDestroy();
+              }
+          }
+          EOF
+          mkdir -p $(dirname app/src/main/res/values/strings.xml)
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="acc_desc">Таңдалған қолданба ашылғанда прицелді автоматты қосады</string>
+          </resources>
+          EOF
+          mkdir -p $(dirname app/src/main/res/xml/accessibility_config.xml)
+          cat > app/src/main/res/xml/accessibility_config.xml <<'EOF'
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:accessibilityEventTypes="typeWindowStateChanged"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:notificationTimeout="100"
+              android:canRetrieveWindowContent="false"
+              android:description="@string/acc_desc" />
           EOF
           mkdir -p $(dirname build.gradle)
           cat > build.gradle <<'EOF'
