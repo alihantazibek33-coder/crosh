@@ -24,1192 +24,260 @@ jobs:
       - name: Create project files
         run: |
           mkdir -p proj && cd proj
-          mkdir -p $(dirname app/build.gradle)
-          cat > app/build.gradle <<'EOF'
-          plugins { id 'com.android.application' }
-          android {
-              namespace 'com.example.crosshair'
-              compileSdk 34
-              defaultConfig {
-                  applicationId "com.example.crosshair"
-                  minSdk 26
-                  targetSdk 33
-                  versionCode 1
-                  versionName "1.0"
-              }
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_1_8
-                  targetCompatibility JavaVersion.VERSION_1_8
-              }
-          }
-          EOF
-          mkdir -p $(dirname app/src/main/AndroidManifest.xml)
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-              <queries>
-                  <intent>
-                      <action android:name="android.intent.action.MAIN" />
-                      <category android:name="android.intent.category.LAUNCHER" />
-                  </intent>
-              </queries>
-
-              <application
-                  android:label="Прицел"
-                  android:icon="@android:drawable/ic_menu_mylocation">
-                  <activity android:name=".MainActivity" android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-                  <activity android:name=".AppPickerActivity" android:exported="false" />
-                  <activity android:name=".ExtrasActivity" android:exported="false" />
-                  <service android:name=".OverlayService" android:exported="false" />
-                  <service android:name=".WidgetService" android:exported="false" />
-                  <service
-                      android:name=".AutoService"
-                      android:exported="false"
-                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-                      <intent-filter>
-                          <action android:name="android.accessibilityservice.AccessibilityService" />
-                      </intent-filter>
-                      <meta-data
-                          android:name="android.accessibilityservice"
-                          android:resource="@xml/accessibility_config" />
-                  </service>
-              </application>
-          </manifest>
-          EOF
-          mkdir -p $(dirname app/src/main/java/com/example/crosshair/AppPickerActivity.java)
-          cat > app/src/main/java/com/example/crosshair/AppPickerActivity.java <<'EOF'
-          package com.example.crosshair;
-
-          import android.app.Activity;
-          import android.content.Intent;
-          import android.content.SharedPreferences;
-          import android.content.pm.PackageManager;
-          import android.content.pm.ResolveInfo;
-          import android.graphics.drawable.Drawable;
-          import android.os.Bundle;
-          import android.text.Editable;
-          import android.text.TextWatcher;
-          import android.view.Gravity;
-          import android.view.View;
-          import android.view.ViewGroup;
-          import android.widget.BaseAdapter;
-          import android.widget.CheckBox;
-          import android.widget.EditText;
-          import android.widget.ImageView;
-          import android.widget.LinearLayout;
-          import android.widget.ListView;
-          import android.widget.TextView;
-
-          import java.util.ArrayList;
-          import java.util.Collections;
-          import java.util.Comparator;
-          import java.util.HashSet;
-          import java.util.List;
-          import java.util.Set;
-
-          public class AppPickerActivity extends Activity {
-              static class Item { String pkg; String label; Drawable icon; }
-
-              static class Holder { ImageView icon; TextView name; CheckBox cb; }
-
-              final List<Item> all = new ArrayList<>();
-              final List<Item> shown = new ArrayList<>();
-              Set<String> sel;
-              SharedPreferences sp;
-              BaseAdapter ad;
-
-              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
-
-              @Override
-              protected void onCreate(Bundle b) {
-                  super.onCreate(b);
-                  setTitle("Қолданбаларды таңдау");
-                  sp = getSharedPreferences("c", MODE_PRIVATE);
-                  sel = new HashSet<>(sp.getStringSet("apps", new HashSet<String>()));
-
-                  PackageManager pm = getPackageManager();
-                  Intent i = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
-                  Set<String> seen = new HashSet<>();
-                  for (ResolveInfo r : pm.queryIntentActivities(i, 0)) {
-                      String p = r.activityInfo.packageName;
-                      if (p.equals(getPackageName()) || !seen.add(p)) continue;
-                      Item it = new Item();
-                      it.pkg = p;
-                      it.label = String.valueOf(r.loadLabel(pm));
-                      it.icon = r.loadIcon(pm);
-                      all.add(it);
-                  }
-                  Collections.sort(all, new Comparator<Item>() {
-                      @Override public int compare(Item a, Item c) { return a.label.compareToIgnoreCase(c.label); }
-                  });
-                  shown.addAll(all);
-
-                  LinearLayout root = new LinearLayout(this);
-                  root.setOrientation(LinearLayout.VERTICAL);
-                  EditText search = new EditText(this);
-                  search.setHint("Іздеу...");
-                  search.setSingleLine(true);
-                  root.addView(search, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                  ListView lv = new ListView(this);
-                  root.addView(lv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-                  setContentView(root);
-
-                  ad = new BaseAdapter() {
-                      @Override public int getCount() { return shown.size(); }
-                      @Override public Object getItem(int pos) { return shown.get(pos); }
-                      @Override public long getItemId(int pos) { return pos; }
-                      @Override public View getView(int pos, View v, ViewGroup parent) {
-                          Holder h;
-                          if (v == null) {
-                              LinearLayout row = new LinearLayout(AppPickerActivity.this);
-                              row.setOrientation(LinearLayout.HORIZONTAL);
-                              row.setGravity(Gravity.CENTER_VERTICAL);
-                              row.setPadding(dp(12), dp(8), dp(12), dp(8));
-                              h = new Holder();
-                              h.icon = new ImageView(AppPickerActivity.this);
-                              row.addView(h.icon, new LinearLayout.LayoutParams(dp(40), dp(40)));
-                              h.name = new TextView(AppPickerActivity.this);
-                              h.name.setTextSize(16);
-                              h.name.setPadding(dp(12), 0, dp(12), 0);
-                              row.addView(h.name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-                              h.cb = new CheckBox(AppPickerActivity.this);
-                              h.cb.setClickable(false);
-                              h.cb.setFocusable(false);
-                              row.addView(h.cb);
-                              row.setTag(h);
-                              v = row;
-                          } else {
-                              h = (Holder) v.getTag();
-                          }
-                          Item it = shown.get(pos);
-                          h.icon.setImageDrawable(it.icon);
-                          h.name.setText(it.label);
-                          h.cb.setChecked(sel.contains(it.pkg));
-                          return v;
-                      }
-                  };
-                  lv.setAdapter(ad);
-                  lv.setOnItemClickListener((parent, view, pos, id) -> {
-                      String p = shown.get(pos).pkg;
-                      if (!sel.remove(p)) sel.add(p);
-                      sp.edit().putStringSet("apps", new HashSet<>(sel)).apply();
-                      ad.notifyDataSetChanged();
-                  });
-
-                  search.addTextChangedListener(new TextWatcher() {
-                      @Override public void beforeTextChanged(CharSequence s, int a, int b2, int c) {}
-                      @Override public void onTextChanged(CharSequence s, int a, int b2, int c) {}
-                      @Override public void afterTextChanged(Editable s) {
-                          String q = s.toString().trim().toLowerCase();
-                          shown.clear();
-                          for (Item it : all) {
-                              if (q.isEmpty() || it.label.toLowerCase().contains(q)) shown.add(it);
-                          }
-                          ad.notifyDataSetChanged();
-                      }
-                  });
-              }
-          }
-          EOF
-          mkdir -p $(dirname app/src/main/java/com/example/crosshair/AutoService.java)
-          cat > app/src/main/java/com/example/crosshair/AutoService.java <<'EOF'
-          package com.example.crosshair;
-
-          import android.accessibilityservice.AccessibilityService;
-          import android.content.Intent;
-          import android.content.SharedPreferences;
-          import android.view.accessibility.AccessibilityEvent;
-          import android.view.inputmethod.InputMethodInfo;
-          import android.view.inputmethod.InputMethodManager;
-
-          import java.util.HashSet;
-          import java.util.Set;
-
-          public class AutoService extends AccessibilityService {
-              static boolean shownByAuto = false;
-
-              @Override
-              public void onAccessibilityEvent(AccessibilityEvent e) {
-                  if (e.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || e.getPackageName() == null) return;
-                  SharedPreferences sp = getSharedPreferences("c", MODE_PRIVATE);
-                  if (!sp.getBoolean("auto", true)) return;
-
-                  String pkg = e.getPackageName().toString();
-                  String cn = e.getClassName() == null ? "" : e.getClassName().toString();
-                  if (pkg.equals(getPackageName()) || pkg.equals("com.android.systemui")) return;
-                  if (cn.startsWith("android.widget.") || cn.startsWith("android.view.")) return;
-                  if (isIme(pkg)) return;
-
-                  Set<String> apps = sp.getStringSet("apps", new HashSet<String>());
-                  if (!OverlayService.running) shownByAuto = false;
-
-                  if (apps.contains(pkg)) {
-                      if (!OverlayService.running) {
-                          try {
-                              startForegroundService(new Intent(this, OverlayService.class));
-                              shownByAuto = true;
-                          } catch (Exception ignored) {}
-                      }
-                  } else if (shownByAuto && OverlayService.running) {
-                      stopService(new Intent(this, OverlayService.class));
-                      shownByAuto = false;
-                  }
-              }
-
-              boolean isIme(String pkg) {
-                  try {
-                      InputMethodManager m = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-                      for (InputMethodInfo i : m.getEnabledInputMethodList()) {
-                          if (i.getPackageName().equals(pkg)) return true;
-                      }
-                  } catch (Exception ignored) {}
-                  return false;
-              }
-
-              @Override public void onInterrupt() {}
-          }
-          EOF
-          mkdir -p $(dirname app/src/main/java/com/example/crosshair/CrosshairView.java)
-          cat > app/src/main/java/com/example/crosshair/CrosshairView.java <<'EOF'
-          package com.example.crosshair;
-
-          import android.content.Context;
-          import android.graphics.Canvas;
-          import android.graphics.Color;
-          import android.graphics.Paint;
-          import android.graphics.Path;
-          import android.view.View;
-
-          public class CrosshairView extends View {
-              public static final String[] NAMES = {
-                      "Нүкте", "Крест", "Шеңбер", "Шеңбер+нүкте", "X", "Тұтас плюс", "Крест+нүкте",
-                      "T-тәрізді", "Шаршы", "Ромб", "Үшбұрыш", "Шеңбер+крест", "Төрт нүкте", "Шеврон"
-              };
-              public static final int TYPES = NAMES.length;
-
-              private int type = 1, color = Color.RED;
-              private float scale = 1f;
-              private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-              private final float d;
-
-              public CrosshairView(Context c) {
-                  super(c);
-                  d = c.getResources().getDisplayMetrics().density;
-                  p.setStrokeCap(Paint.Cap.ROUND);
-                  p.setStrokeJoin(Paint.Join.ROUND);
-              }
-
-              public void set(int t, int col, float sc) {
-                  type = t; color = col; scale = sc;
-                  requestLayout();
-                  invalidate();
-              }
-
-              @Override
-              protected void onMeasure(int w, int h) {
-                  int s = (int) (120 * d * scale);
-                  setMeasuredDimension(s, s);
-              }
-
-              @Override
-              protected void onDraw(Canvas c) {
-                  float u = getWidth() / 120f;
-                  float cx = getWidth() / 2f, cy = getHeight() / 2f;
-                  float g = 6 * u, l = 28 * u, r = 30 * u;
-                  p.setColor(color);
-                  p.setStrokeWidth(2 * u);
-                  p.setStyle(Paint.Style.STROKE);
-                  switch (type) {
-                      case 0: {
-                          p.setStyle(Paint.Style.FILL);
-                          c.drawCircle(cx, cy, 4 * u, p);
-                          break;
-                      }
-                      case 1: {
-                          c.drawLine(cx - l, cy, cx - g, cy, p);
-                          c.drawLine(cx + g, cy, cx + l, cy, p);
-                          c.drawLine(cx, cy - l, cx, cy - g, p);
-                          c.drawLine(cx, cy + g, cx, cy + l, p);
-                          break;
-                      }
-                      case 2: {
-                          c.drawCircle(cx, cy, r, p);
-                          break;
-                      }
-                      case 3: {
-                          c.drawCircle(cx, cy, r, p);
-                          p.setStyle(Paint.Style.FILL);
-                          c.drawCircle(cx, cy, 3 * u, p);
-                          break;
-                      }
-                      case 4: {
-                          c.drawLine(cx - l, cy - l, cx - g, cy - g, p);
-                          c.drawLine(cx + g, cy + g, cx + l, cy + l, p);
-                          c.drawLine(cx + l, cy - l, cx + g, cy - g, p);
-                          c.drawLine(cx - g, cy + g, cx - l, cy + l, p);
-                          break;
-                      }
-                      case 5: {
-                          c.drawLine(cx - l, cy, cx + l, cy, p);
-                          c.drawLine(cx, cy - l, cx, cy + l, p);
-                          break;
-                      }
-                      case 6: {
-                          c.drawLine(cx - l, cy, cx - g, cy, p);
-                          c.drawLine(cx + g, cy, cx + l, cy, p);
-                          c.drawLine(cx, cy - l, cx, cy - g, p);
-                          c.drawLine(cx, cy + g, cx, cy + l, p);
-                          p.setStyle(Paint.Style.FILL);
-                          c.drawCircle(cx, cy, 2.5f * u, p);
-                          break;
-                      }
-                      case 7: {
-                          c.drawLine(cx - l, cy, cx + l, cy, p);
-                          c.drawLine(cx, cy, cx, cy + l, p);
-                          break;
-                      }
-                      case 8: {
-                          float h = 22 * u;
-                          c.drawRect(cx - h, cy - h, cx + h, cy + h, p);
-                          break;
-                      }
-                      case 9: {
-                          Path q = new Path();
-                          q.moveTo(cx, cy - r);
-                          q.lineTo(cx + r, cy);
-                          q.lineTo(cx, cy + r);
-                          q.lineTo(cx - r, cy);
-                          q.close();
-                          c.drawPath(q, p);
-                          break;
-                      }
-                      case 10: {
-                          Path q = new Path();
-                          q.moveTo(cx, cy - r);
-                          q.lineTo(cx + r, cy + r * 0.8f);
-                          q.lineTo(cx - r, cy + r * 0.8f);
-                          q.close();
-                          c.drawPath(q, p);
-                          break;
-                      }
-                      case 11: {
-                          c.drawCircle(cx, cy, 22 * u, p);
-                          float e = 36 * u;
-                          c.drawLine(cx - e, cy, cx - g, cy, p);
-                          c.drawLine(cx + g, cy, cx + e, cy, p);
-                          c.drawLine(cx, cy - e, cx, cy - g, p);
-                          c.drawLine(cx, cy + g, cx, cy + e, p);
-                          break;
-                      }
-                      case 12: {
-                          p.setStyle(Paint.Style.FILL);
-                          float o = 20 * u;
-                          c.drawCircle(cx - o, cy, 3 * u, p);
-                          c.drawCircle(cx + o, cy, 3 * u, p);
-                          c.drawCircle(cx, cy - o, 3 * u, p);
-                          c.drawCircle(cx, cy + o, 3 * u, p);
-                          break;
-                      }
-                      case 13: {
-                          Path q = new Path();
-                          q.moveTo(cx - 20 * u, cy + 8 * u);
-                          q.lineTo(cx, cy - 12 * u);
-                          q.lineTo(cx + 20 * u, cy + 8 * u);
-                          c.drawPath(q, p);
-                          break;
-                      }
-                  }
-              }
-          }
-          EOF
-          mkdir -p $(dirname app/src/main/java/com/example/crosshair/ExtrasActivity.java)
-          cat > app/src/main/java/com/example/crosshair/ExtrasActivity.java <<'EOF'
-          package com.example.crosshair;
-
-          import android.app.Activity;
-          import android.content.Intent;
-          import android.content.SharedPreferences;
-          import android.net.Uri;
-          import android.os.Bundle;
-          import android.provider.Settings;
-          import android.view.ViewGroup;
-          import android.widget.Button;
-          import android.widget.CheckBox;
-          import android.widget.LinearLayout;
-          import android.widget.ScrollView;
-          import android.widget.SeekBar;
-          import android.widget.TextView;
-          import android.widget.Toast;
-
-          public class ExtrasActivity extends Activity {
-              static final String[] POS = {"Сол жақ жоғары", "Оң жақ жоғары", "Сол жақ төмен", "Оң жақ төмен"};
-
-              SharedPreferences sp;
-              Button master, posBtn;
-              TextView sizeLabel;
-
-              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
-
-              TextView head(String t) {
-                  TextView tv = new TextView(this);
-                  tv.setText(t);
-                  tv.setTextSize(20);
-                  tv.setPadding(0, dp(18), 0, dp(6));
-                  return tv;
-              }
-
-              CheckBox check(String t, final String key) {
-                  CheckBox cb = new CheckBox(this);
-                  cb.setText(t);
-                  cb.setChecked(sp.getBoolean(key, true));
-                  cb.setOnCheckedChangeListener((b, c) -> {
-                      sp.edit().putBoolean(key, c).apply();
-                      refresh();
-                  });
-                  return cb;
-              }
-
-              void refresh() {
-                  if (WidgetService.running) {
-                      startService(new Intent(this, WidgetService.class).setAction(WidgetService.ACTION_REFRESH));
-                  }
-              }
-
-              void updateMaster() {
-                  master.setText(WidgetService.running ? "■ Виджеттерді өшіру" : "▶ Виджеттерді қосу");
-              }
-
-              @Override
-              protected void onCreate(Bundle b) {
-                  super.onCreate(b);
-                  setTitle("Қосымша");
-                  sp = getSharedPreferences("c", MODE_PRIVATE);
-
-                  LinearLayout l = new LinearLayout(this);
-                  l.setOrientation(LinearLayout.VERTICAL);
-                  l.setPadding(dp(20), dp(20), dp(20), dp(20));
-
-                  TextView title = new TextView(this);
-                  title.setText("Қосымша");
-                  title.setTextSize(26);
-                  l.addView(title);
-
-                  // ---------- Виджеттер ----------
-                  l.addView(head("📊 Виджеттер"));
-                  l.addView(check("🕒 Сағат", "w_clock"));
-                  l.addView(check("🔋 Батарея (% және температура)", "w_batt"));
-                  l.addView(check("⬇⬆ Интернет жылдамдығы", "w_net"));
-
-                  posBtn = new Button(this);
-                  posBtn.setAllCaps(false);
-                  posBtn.setText("Орны: " + POS[sp.getInt("w_pos", 1) % 4]);
-                  posBtn.setOnClickListener(v -> {
-                      int p = (sp.getInt("w_pos", 1) + 1) % 4;
-                      sp.edit().putInt("w_pos", p).apply();
-                      posBtn.setText("Орны: " + POS[p]);
-                      refresh();
-                  });
-                  l.addView(posBtn);
-
-                  sizeLabel = new TextView(this);
-                  sizeLabel.setText("Мәтін өлшемі: " + sp.getInt("w_size", 13));
-                  l.addView(sizeLabel);
-                  SeekBar sb = new SeekBar(this);
-                  sb.setMax(14);
-                  sb.setProgress(sp.getInt("w_size", 13) - 10);
-                  sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                      @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
-                          sizeLabel.setText("Мәтін өлшемі: " + (p + 10));
-                          if (fromUser) sp.edit().putInt("w_size", p + 10).apply();
-                      }
-                      @Override public void onStartTrackingTouch(SeekBar s) {}
-                      @Override public void onStopTrackingTouch(SeekBar s) { refresh(); }
-                  });
-                  l.addView(sb);
-
-                  master = new Button(this);
-                  master.setAllCaps(false);
-                  master.setOnClickListener(v -> {
-                      if (WidgetService.running) {
-                          stopService(new Intent(this, WidgetService.class));
-                          master.setText("▶ Виджеттерді қосу");
-                          return;
-                      }
-                      if (!Settings.canDrawOverlays(this)) {
-                          Toast.makeText(this, "Басқа қолданбалардың үстінен көрсетуге рұқсат беріңіз", Toast.LENGTH_LONG).show();
-                          startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                  Uri.parse("package:" + getPackageName())));
-                          return;
-                      }
-                      if (!sp.getBoolean("w_clock", true) && !sp.getBoolean("w_batt", true) && !sp.getBoolean("w_net", true)) {
-                          Toast.makeText(this, "Кемінде бір виджетті таңдаңыз", Toast.LENGTH_SHORT).show();
-                          return;
-                      }
-                      startForegroundService(new Intent(this, WidgetService.class));
-                      master.setText("■ Виджеттерді өшіру");
-                  });
-                  l.addView(master);
-
-                  TextView note = new TextView(this);
-                  note.setText("Виджеттер қосылғанда 2-ші хабарлама шығады (прицелдің хабарламасынан бөлек).");
-                  note.setTextSize(13);
-                  note.setPadding(0, dp(6), 0, 0);
-                  l.addView(note);
-
-                  // ---------- Болашақ функциялар осында қосылады ----------
-                  l.addView(head("➕ Жақында"));
-                  TextView soon = new TextView(this);
-                  soon.setText("Жаңа функциялар осы бөлімге қосылады.");
-                  l.addView(soon);
-
-                  ScrollView sv = new ScrollView(this);
-                  sv.addView(l, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                  setContentView(sv);
-              }
-
-              @Override
-              protected void onResume() {
-                  super.onResume();
-                  updateMaster();
-              }
-          }
-          EOF
-          mkdir -p $(dirname app/src/main/java/com/example/crosshair/MainActivity.java)
-          cat > app/src/main/java/com/example/crosshair/MainActivity.java <<'EOF'
-          package com.example.crosshair;
-
-          import android.Manifest;
-          import android.app.Activity;
-          import android.content.Intent;
-          import android.content.SharedPreferences;
-          import android.net.Uri;
-          import android.os.Build;
-          import android.os.Bundle;
-          import android.provider.Settings;
-          import android.view.ViewGroup;
-          import android.widget.Button;
-          import android.widget.CheckBox;
-          import android.widget.LinearLayout;
-          import android.widget.ScrollView;
-          import android.widget.TextView;
-          import android.widget.Toast;
-
-          import java.util.HashSet;
-
-          public class MainActivity extends Activity {
-              TextView status;
-              SharedPreferences sp;
-
-              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
-
-              Button btn(String t, android.view.View.OnClickListener l) {
-                  Button b = new Button(this);
-                  b.setText(t);
-                  b.setAllCaps(false);
-                  b.setOnClickListener(l);
-                  return b;
-              }
-
-              @Override
-              protected void onCreate(Bundle b) {
-                  super.onCreate(b);
-                  sp = getSharedPreferences("c", MODE_PRIVATE);
-
-                  LinearLayout l = new LinearLayout(this);
-                  l.setOrientation(LinearLayout.VERTICAL);
-                  l.setPadding(dp(20), dp(30), dp(20), dp(20));
-
-                  TextView title = new TextView(this);
-                  title.setText("Прицел");
-                  title.setTextSize(26);
-                  l.addView(title);
-
-                  l.addView(btn("▶ Прицелді қосу", v -> {
-                      if (!Settings.canDrawOverlays(this)) {
-                          Toast.makeText(this, "Басқа қолданбалардың үстінен көрсетуге рұқсат беріңіз", Toast.LENGTH_LONG).show();
-                          startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                  Uri.parse("package:" + getPackageName())));
-                          return;
-                      }
-                      startForegroundService(new Intent(this, OverlayService.class));
-                      Toast.makeText(this, "Прицел қосылды", Toast.LENGTH_SHORT).show();
-                  }));
-
-                  l.addView(btn("■ Прицелді өшіру", v -> stopService(new Intent(this, OverlayService.class))));
-
-                  l.addView(btn("📱 Қолданбаларды таңдау", v ->
-                          startActivity(new Intent(this, AppPickerActivity.class))));
-
-                  l.addView(btn("➕ Қосымша", v ->
-                          startActivity(new Intent(this, ExtrasActivity.class))));
-
-                  CheckBox auto = new CheckBox(this);
-                  auto.setText("Авто режим: таңдалған қолданбаға кіргенде прицел өзі қосылады");
-                  auto.setChecked(sp.getBoolean("auto", true));
-                  auto.setOnCheckedChangeListener((cb, checked) -> sp.edit().putBoolean("auto", checked).apply());
-                  l.addView(auto);
-
-                  l.addView(btn("♿ Авто режимге рұқсат беру", v ->
-                          startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))));
-
-                  TextView note = new TextView(this);
-                  note.setText("Ашылған тізімнен «Прицел» қолданбасын тауып қосыңыз. Рұқсат бұғатталса: "
-                          + "Параметрлер → Қолданбалар → Прицел → ⋮ (үш нүкте) → «Шектелген параметрлерге рұқсат беру», "
-                          + "содан кейін қайта қосыңыз.");
-                  note.setTextSize(13);
-                  l.addView(note);
-
-                  status = new TextView(this);
-                  status.setTextSize(15);
-                  status.setPadding(0, dp(16), 0, 0);
-                  l.addView(status);
-
-                  ScrollView sv = new ScrollView(this);
-                  sv.addView(l, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                  setContentView(sv);
-
-                  if (Build.VERSION.SDK_INT >= 33) {
-                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
-                  }
-              }
-
-              boolean accOn() {
-                  String s = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-                  return s != null && s.contains(getPackageName() + "/") && s.contains("AutoService");
-              }
-
-              @Override
-              protected void onResume() {
-                  super.onResume();
-                  int n = sp.getStringSet("apps", new HashSet<String>()).size();
-                  status.setText("Таңдалған қолданба: " + n + "\nАрнайы мүмкіндік рұқсаты: "
-                          + (accOn() ? "қосулы ✅" : "өшірулі ❌"));
-              }
-          }
-          EOF
-          mkdir -p $(dirname app/src/main/java/com/example/crosshair/OverlayService.java)
-          cat > app/src/main/java/com/example/crosshair/OverlayService.java <<'EOF'
-          package com.example.crosshair;
-
-          import android.app.Notification;
-          import android.app.NotificationChannel;
-          import android.app.NotificationManager;
-          import android.app.PendingIntent;
-          import android.app.Service;
-          import android.content.Intent;
-          import android.content.SharedPreferences;
-          import android.graphics.Color;
-          import android.graphics.PixelFormat;
-          import android.graphics.drawable.GradientDrawable;
-          import android.os.IBinder;
-          import android.view.Gravity;
-          import android.view.MotionEvent;
-          import android.view.View;
-          import android.view.WindowManager;
-          import android.widget.Button;
-          import android.widget.LinearLayout;
-          import android.widget.ScrollView;
-          import android.widget.SeekBar;
-          import android.widget.TextView;
-
-          import java.util.function.IntConsumer;
-
-          public class OverlayService extends Service {
-              static final String ACTION_MOVE = "com.example.crosshair.MOVE";
-              static final String ACTION_STOP = "com.example.crosshair.STOP";
-              static final String ACTION_NEXT = "com.example.crosshair.NEXT";
-              static final String CH = "crosshair";
-              static final int[] COLORS = {Color.RED, Color.GREEN, Color.CYAN, Color.YELLOW, Color.WHITE, Color.MAGENTA};
-              static boolean running = false;
-
-              WindowManager wm;
-              NotificationManager nm;
-              SharedPreferences sp;
-              CrosshairView cross;
-              WindowManager.LayoutParams cp, mp;
-              View menu;
-              TextView stepLabel, typeLabel, sizeLabel, alphaLabel;
-              boolean menuShown = false;
-              int step = 5, type, color, size, alpha;
-
-              @Override public IBinder onBind(Intent i) { return null; }
-
-              @Override
-              public void onCreate() {
-                  super.onCreate();
-                  running = true;
-                  wm = (WindowManager) getSystemService(WINDOW_SERVICE);
-                  nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-                  nm.createNotificationChannel(new NotificationChannel(CH, "Прицел", NotificationManager.IMPORTANCE_LOW));
-                  sp = getSharedPreferences("c", MODE_PRIVATE);
-                  type = sp.getInt("type", 1);
-                  color = sp.getInt("color", Color.RED);
-                  size = sp.getInt("size", 100);
-                  alpha = sp.getInt("alpha", 100);
-
-                  cross = new CrosshairView(this);
-                  cross.set(type, color, size / 100f);
-                  cross.setAlpha(alpha / 100f);
-                  cp = new WindowManager.LayoutParams(
-                          WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                                  | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                          PixelFormat.TRANSLUCENT);
-                  cp.gravity = Gravity.CENTER;
-                  cp.x = sp.getInt("x", 0);
-                  cp.y = sp.getInt("y", 0);
-                  wm.addView(cross, cp);
-
-                  // қолмен сүйреу (тек жылжыту режимінде жұмыс істейді)
-                  cross.setOnTouchListener(new View.OnTouchListener() {
-                      float dx, dy; int sx, sy;
-                      @Override public boolean onTouch(View v, MotionEvent e) {
-                          switch (e.getAction()) {
-                              case MotionEvent.ACTION_DOWN:
-                                  dx = e.getRawX(); dy = e.getRawY(); sx = cp.x; sy = cp.y; return true;
-                              case MotionEvent.ACTION_MOVE:
-                                  cp.x = sx + (int) (e.getRawX() - dx);
-                                  cp.y = sy + (int) (e.getRawY() - dy);
-                                  wm.updateViewLayout(cross, cp);
-                                  return true;
-                              case MotionEvent.ACTION_UP:
-                                  savePos(); return true;
-                          }
-                          return false;
-                      }
-                  });
-                  buildMenu();
-                  apply();
-              }
-
-              @Override
-              public int onStartCommand(Intent intent, int flags, int startId) {
-                  startForeground(1, buildNotification());
-                  String a = intent == null ? null : intent.getAction();
-                  if (ACTION_STOP.equals(a)) {
-                      stopForeground(true);
-                      stopSelf();
-                  } else if (ACTION_MOVE.equals(a)) {
-                      toggleMenu();
-                  } else if (ACTION_NEXT.equals(a)) {
-                      type = (type + 1) % CrosshairView.TYPES;
-                      apply();
-                  }
-                  return START_STICKY;
-              }
-
-              // ---------- Хабарлама ----------
-              PendingIntent act(int code, String action) {
-                  return PendingIntent.getService(this, code,
-                          new Intent(this, OverlayService.class).setAction(action),
-                          PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-              }
-
-              Notification buildNotification() {
-                  return new Notification.Builder(this, CH)
-                          .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                          .setContentTitle("Прицел қосулы")
-                          .setOngoing(true)
-                          .addAction(android.R.drawable.ic_menu_edit, menuShown ? "Жылжытуды жабу" : "Жылжыту", act(1, ACTION_MOVE))
-                          .addAction(android.R.drawable.ic_media_next, "Түрі ▶", act(3, ACTION_NEXT))
-                          .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Өшіру", act(2, ACTION_STOP))
-                          .build();
-              }
-
-              // ---------- Меню ----------
-              void toggleMenu() {
-                  menuShown = !menuShown;
-                  if (menuShown) {
-                      wm.addView(menu, mp);
-                      cp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                  } else {
-                      wm.removeView(menu);
-                      cp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                  }
-                  wm.updateViewLayout(cross, cp);
-                  nm.notify(1, buildNotification());
-              }
-
-              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
-
-              Button btn(String t, View.OnClickListener l) {
-                  Button b = new Button(this);
-                  b.setText(t);
-                  b.setAllCaps(false);
-                  b.setMinWidth(0);
-                  b.setMinimumWidth(0);
-                  b.setOnClickListener(l);
-                  return b;
-              }
-
-              TextView label(String t) {
-                  TextView tv = new TextView(this);
-                  tv.setText(t);
-                  tv.setTextColor(Color.WHITE);
-                  tv.setGravity(Gravity.CENTER);
-                  tv.setPadding(0, dp(6), 0, 0);
-                  return tv;
-              }
-
-              LinearLayout row() {
-                  LinearLayout r = new LinearLayout(this);
-                  r.setOrientation(LinearLayout.HORIZONTAL);
-                  r.setGravity(Gravity.CENTER);
-                  return r;
-              }
-
-              SeekBar seek(final int min, int max, int val, final IntConsumer c) {
-                  SeekBar sb = new SeekBar(this);
-                  sb.setMax(max - min);
-                  sb.setProgress(val - min);
-                  sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                      @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
-                          if (fromUser) c.accept(p + min);
-                      }
-                      @Override public void onStartTrackingTouch(SeekBar s) {}
-                      @Override public void onStopTrackingTouch(SeekBar s) {}
-                  });
-                  return sb;
-              }
-
-              void buildMenu() {
-                  LinearLayout root = new LinearLayout(this);
-                  root.setOrientation(LinearLayout.VERTICAL);
-                  root.setPadding(dp(10), dp(6), dp(10), dp(10));
-                  GradientDrawable bg = new GradientDrawable();
-                  bg.setColor(0xEE222222);
-                  bg.setCornerRadius(dp(14));
-                  root.setBackground(bg);
-
-                  mp = new WindowManager.LayoutParams(
-                          dp(280), getResources().getDisplayMetrics().heightPixels * 7 / 10,
-                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
-                  mp.gravity = Gravity.TOP | Gravity.START;
-                  mp.x = dp(16);
-                  mp.y = dp(60);
-
-                  // тақырып: осыдан сүйреп менюді жылжытуға болады
-                  TextView title = label("✥ Прицел (осыдан сүйреңіз)");
-                  title.setPadding(0, dp(8), 0, dp(8));
-                  title.setOnTouchListener(new View.OnTouchListener() {
-                      float dx, dy; int sx, sy;
-                      @Override public boolean onTouch(View v, MotionEvent e) {
-                          switch (e.getAction()) {
-                              case MotionEvent.ACTION_DOWN:
-                                  dx = e.getRawX(); dy = e.getRawY(); sx = mp.x; sy = mp.y; return true;
-                              case MotionEvent.ACTION_MOVE:
-                                  mp.x = sx + (int) (e.getRawX() - dx);
-                                  mp.y = sy + (int) (e.getRawY() - dy);
-                                  wm.updateViewLayout(menu, mp);
-                                  return true;
-                          }
-                          return false;
-                      }
-                  });
-                  root.addView(title);
-
-                  // түрі
-                  typeLabel = label("");
-                  root.addView(typeLabel);
-                  LinearLayout r1 = row();
-                  r1.addView(btn("◀ Түрі", v -> { type = (type + CrosshairView.TYPES - 1) % CrosshairView.TYPES; apply(); }));
-                  r1.addView(btn("Түрі ▶", v -> { type = (type + 1) % CrosshairView.TYPES; apply(); }));
-                  root.addView(r1);
-
-                  // түсі
-                  LinearLayout r2 = row();
-                  for (int c : COLORS) {
-                      Button b = btn("", v -> { color = c; apply(); });
-                      b.setBackgroundColor(c);
-                      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(36), dp(36));
-                      lp.setMargins(dp(2), dp(6), dp(2), dp(6));
-                      r2.addView(b, lp);
-                  }
-                  root.addView(r2);
-
-                  // өлшемі
-                  sizeLabel = label("");
-                  root.addView(sizeLabel);
-                  root.addView(seek(30, 300, size, v -> { size = v; apply(); }));
-
-                  // мөлдірлік
-                  alphaLabel = label("");
-                  root.addView(alphaLabel);
-                  root.addView(seek(20, 100, alpha, v -> { alpha = v; apply(); }));
-
-                  // қадам
-                  stepLabel = label("Қадам: " + step + " px");
-                  root.addView(stepLabel);
-                  LinearLayout r3 = row();
-                  for (int s : new int[]{1, 5, 10, 25}) {
-                      r3.addView(btn(String.valueOf(s), v -> { step = s; stepLabel.setText("Қадам: " + step + " px"); }));
-                  }
-                  root.addView(r3);
-
-                  // бағыттар
-                  LinearLayout up = row();
-                  up.addView(btn("▲", v -> move(0, -step)));
-                  LinearLayout mid = row();
-                  mid.addView(btn("◀", v -> move(-step, 0)));
-                  mid.addView(btn("▼", v -> move(0, step)));
-                  mid.addView(btn("▶", v -> move(step, 0)));
-                  root.addView(up);
-                  root.addView(mid);
-
-                  root.addView(btn("Орталыққа қайтару", v -> { cp.x = 0; cp.y = 0; wm.updateViewLayout(cross, cp); savePos(); }));
-
-                  ScrollView sv = new ScrollView(this);
-                  sv.addView(root);
-                  menu = sv;
-              }
-
-              void move(int dx, int dy) {
-                  cp.x += dx;
-                  cp.y += dy;
-                  wm.updateViewLayout(cross, cp);
-                  savePos();
-              }
-
-              void apply() {
-                  cross.set(type, color, size / 100f);
-                  cross.setAlpha(alpha / 100f);
-                  try { wm.updateViewLayout(cross, cp); } catch (Exception ignored) {}
-                  if (typeLabel != null) typeLabel.setText("Түрі: " + CrosshairView.NAMES[type] + " (" + (type + 1) + "/" + CrosshairView.TYPES + ")");
-                  if (sizeLabel != null) sizeLabel.setText("Өлшемі: " + size + "%");
-                  if (alphaLabel != null) alphaLabel.setText("Мөлдірлік: " + alpha + "%");
-                  sp.edit().putInt("type", type).putInt("color", color).putInt("size", size).putInt("alpha", alpha).apply();
-              }
-
-              void savePos() { sp.edit().putInt("x", cp.x).putInt("y", cp.y).apply(); }
-
-              @Override
-              public void onDestroy() {
-                  running = false;
-                  try { wm.removeView(cross); } catch (Exception ignored) {}
-                  if (menuShown) { try { wm.removeView(menu); } catch (Exception ignored) {} }
-                  super.onDestroy();
-              }
-          }
-          EOF
-          mkdir -p $(dirname app/src/main/java/com/example/crosshair/WidgetService.java)
-          cat > app/src/main/java/com/example/crosshair/WidgetService.java <<'EOF'
-          package com.example.crosshair;
-
-          import android.app.Notification;
-          import android.app.NotificationChannel;
-          import android.app.NotificationManager;
-          import android.app.PendingIntent;
-          import android.app.Service;
-          import android.content.Intent;
-          import android.content.IntentFilter;
-          import android.content.SharedPreferences;
-          import android.graphics.Color;
-          import android.graphics.PixelFormat;
-          import android.graphics.drawable.GradientDrawable;
-          import android.net.TrafficStats;
-          import android.os.BatteryManager;
-          import android.os.Handler;
-          import android.os.IBinder;
-          import android.os.Looper;
-          import android.os.SystemClock;
-          import android.util.TypedValue;
-          import android.view.Gravity;
-          import android.view.WindowManager;
-          import android.widget.LinearLayout;
-          import android.widget.TextView;
-
-          import java.text.SimpleDateFormat;
-          import java.util.Date;
-          import java.util.Locale;
-
-          public class WidgetService extends Service {
-              static final String ACTION_STOP = "com.example.crosshair.WSTOP";
-              static final String ACTION_REFRESH = "com.example.crosshair.WREFRESH";
-              static final String CH = "widgets";
-              static boolean running = false;
-
-              WindowManager wm;
-              NotificationManager nm;
-              SharedPreferences sp;
-              LinearLayout panel;
-              TextView tClock, tBatt, tNet;
-              final Handler h = new Handler(Looper.getMainLooper());
-              long lastRx, lastTx, lastT;
-              final SimpleDateFormat fmt = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
-
-              final Runnable tick = new Runnable() {
-                  @Override public void run() {
-                      update();
-                      h.postDelayed(this, 1000);
-                  }
-              };
-
-              @Override public IBinder onBind(Intent i) { return null; }
-
-              @Override
-              public void onCreate() {
-                  super.onCreate();
-                  running = true;
-                  wm = (WindowManager) getSystemService(WINDOW_SERVICE);
-                  nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-                  nm.createNotificationChannel(new NotificationChannel(CH, "Виджеттер", NotificationManager.IMPORTANCE_LOW));
-                  sp = getSharedPreferences("c", MODE_PRIVATE);
-                  lastRx = TrafficStats.getTotalRxBytes();
-                  lastTx = TrafficStats.getTotalTxBytes();
-                  lastT = SystemClock.elapsedRealtime();
-                  build();
-                  h.post(tick);
-              }
-
-              @Override
-              public int onStartCommand(Intent intent, int flags, int startId) {
-                  startForeground(2, buildNotification());
-                  String a = intent == null ? null : intent.getAction();
-                  if (ACTION_STOP.equals(a)) {
-                      stopForeground(true);
-                      stopSelf();
-                  } else if (ACTION_REFRESH.equals(a)) {
-                      build();
-                      update();
-                  }
-                  return START_STICKY;
-              }
-
-              Notification buildNotification() {
-                  PendingIntent st = PendingIntent.getService(this, 20,
-                          new Intent(this, WidgetService.class).setAction(ACTION_STOP),
-                          PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-                  return new Notification.Builder(this, CH)
-                          .setSmallIcon(android.R.drawable.ic_menu_info_details)
-                          .setContentTitle("Виджеттер қосулы")
-                          .setOngoing(true)
-                          .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Өшіру", st)
-                          .build();
-              }
-
-              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
-
-              TextView tv(int sizeSp) {
-                  TextView t = new TextView(this);
-                  t.setTextColor(Color.WHITE);
-                  t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp);
-                  t.setTypeface(android.graphics.Typeface.MONOSPACE);
-                  return t;
-              }
-
-              void build() {
-                  if (panel != null) {
-                      try { wm.removeView(panel); } catch (Exception ignored) {}
-                  }
-                  int sz = sp.getInt("w_size", 13);
-                  int pos = sp.getInt("w_pos", 1);
-
-                  panel = new LinearLayout(this);
-                  panel.setOrientation(LinearLayout.VERTICAL);
-                  panel.setPadding(dp(8), dp(4), dp(8), dp(4));
-                  GradientDrawable bg = new GradientDrawable();
-                  bg.setColor(0x99000000);
-                  bg.setCornerRadius(dp(8));
-                  panel.setBackground(bg);
-
-                  tClock = null; tBatt = null; tNet = null;
-                  if (sp.getBoolean("w_clock", true)) { tClock = tv(sz); panel.addView(tClock); }
-                  if (sp.getBoolean("w_batt", true)) { tBatt = tv(sz); panel.addView(tBatt); }
-                  if (sp.getBoolean("w_net", true)) { tNet = tv(sz); panel.addView(tNet); }
-
-                  WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                          WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-                          PixelFormat.TRANSLUCENT);
-                  int[] g = {Gravity.TOP | Gravity.START, Gravity.TOP | Gravity.END,
-                          Gravity.BOTTOM | Gravity.START, Gravity.BOTTOM | Gravity.END};
-                  lp.gravity = g[pos % 4];
-                  lp.x = dp(8);
-                  lp.y = (pos < 2) ? dp(30) : dp(40);
-                  wm.addView(panel, lp);
-              }
-
-              String speed(float bps) {
-                  if (bps >= 1024 * 1024) return String.format(Locale.US, "%.1f MB/s", bps / 1048576f);
-                  return String.format(Locale.US, "%.0f KB/s", bps / 1024f);
-              }
-
-              void update() {
-                  if (tClock != null) tClock.setText("🕒 " + fmt.format(new Date()));
-
-                  if (tBatt != null) {
-                      Intent b = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-                      if (b != null) {
-                          int level = b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-                          int scale = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
-                          int status = b.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
-                          float temp = b.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) / 10f;
-                          boolean ch = status == BatteryManager.BATTERY_STATUS_CHARGING
-                                  || status == BatteryManager.BATTERY_STATUS_FULL;
-                          int pct = scale > 0 ? level * 100 / scale : level;
-                          tBatt.setText("🔋 " + pct + "%" + (ch ? " ⚡" : "") + " " + String.format(Locale.US, "%.0f°C", temp));
-                      }
-                  }
-
-                  long now = SystemClock.elapsedRealtime();
-                  long rx = TrafficStats.getTotalRxBytes();
-                  long tx = TrafficStats.getTotalTxBytes();
-                  float dt = (now - lastT) / 1000f;
-                  if (tNet != null && dt > 0 && rx != TrafficStats.UNSUPPORTED && tx != TrafficStats.UNSUPPORTED) {
-                      tNet.setText("⬇ " + speed((rx - lastRx) / dt) + "\n⬆ " + speed((tx - lastTx) / dt));
-                  }
-                  lastRx = rx; lastTx = tx; lastT = now;
-              }
-
-              @Override
-              public void onDestroy() {
-                  running = false;
-                  h.removeCallbacks(tick);
-                  if (panel != null) {
-                      try { wm.removeView(panel); } catch (Exception ignored) {}
-                  }
-                  super.onDestroy();
-              }
-          }
-          EOF
-          mkdir -p $(dirname app/src/main/res/values/strings.xml)
-          cat > app/src/main/res/values/strings.xml <<'EOF'
-          <resources>
-              <string name="acc_desc">Таңдалған қолданба ашылғанда прицелді автоматты қосады</string>
-          </resources>
-          EOF
-          mkdir -p $(dirname app/src/main/res/xml/accessibility_config.xml)
-          cat > app/src/main/res/xml/accessibility_config.xml <<'EOF'
-          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-              android:accessibilityEventTypes="typeWindowStateChanged"
-              android:accessibilityFeedbackType="feedbackGeneric"
-              android:notificationTimeout="100"
-              android:canRetrieveWindowContent="false"
-              android:description="@string/acc_desc" />
-          EOF
-          mkdir -p $(dirname build.gradle)
-          cat > build.gradle <<'EOF'
-          plugins { id 'com.android.application' version '8.1.0' apply false }
-          EOF
-          mkdir -p $(dirname settings.gradle)
-          cat > settings.gradle <<'EOF'
-          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
-          rootProject.name = "CrosshairApp"
-          include ':app'
-          EOF
+          cat > data.txt <<'B64'
+          a822 /Td6WFoAAATm1rRGAgAhARYAAAB0L+Wj4bf/RxBdABcLvBx9AZXAHUo+eRXCzCajYxw4K4hc+YZFlZ5GHEvoyWbgpDbyGpw78q/g
+          0286 kgvhXSUIFqMX2y1No2tvjQAOpQPPpE2Od+rbJ098j/bKzknteiVLY8F0iZ50i59GtXSjGJFre3rpJKytmCk14yfCQbLcsyBpGlvh
+          453a U44DfU5p+BrPe3pRqylgU4TC4t9qKrQLiryyZpEjQVcGyKKY8eNHkjjllt+nIkv6ffwmM7rLyck0o4eIzUeGLDcG9bdaX2XWW25q
+          85b4 JSRCFuEYzYBM0+HB5dNiOL9U9ajrTmyUGVjRaKCvxPqU9svU49rX6kOKwaGeBcBc8/+YZi0nDpkXeZg6+NxsGnxJ2BaC4ZDtaNiM
+          5a35 msGY9hRD8czmrgZHiPYpHXz3zL/o3ktNQ9166ozY9/c0x+Z7nrS8aRmwEYKT3DNmXsTRUdoJ9Q2kgWLiFvxsJbTuYiLmKCUyvG7X
+          8e8a TbAPgFrHYRRM0/Ub53/3M1jxVy23MJ5Xi6wV2qyvdU+B+DOwx11VZVa/Q6u5oau0QSj+sjD6NE+H/AN95CNE+oOmNfI1GzDxB3IM
+          3202 mVha8cVEv6u0rz8DmJrPKpnkVX2BWOjcjIBMYLPFegyH6JTcX9nPoAWMsp8U9Go1MT9an2Jx5WsFh1b7ai5iiqMFCYOhn51tRa/U
+          9473 sVhHzhb+gF9e4Q/EYVqo1W/Tty8aTDmdImVO+a2ZQmn6EguP0n5UeWAK3vALCXdb2EUcb+ca6dgTXEO0uRCSCG6EexMz/Zb8HZkZ
+          db51 Zny1i71LEckauPkrSkpPGC/OJFMYiGud/2iO3XH5a4fHUo4nSYa+ziOc3pIGvVPqPxTDtwU3AzIaY+nNNgVUbxNEPblYPfaXWK5J
+          713d rl46C7YKBaP0Fj0CgXtfITbmubsjE7x6YjtG+1UKdqdp15AJCm7ORX6rtvUzRNODZn1HVi+glT5n4CSQ1xZ2iBeb/5wSqaPddY0j
+          df99 tg9iyb3Izq8N2xNjPy8/T89ZO1a4j9dagTX4oEcabOGnlyENATevCp4OPUn/Um5t4WzDUR3EZtHXhnm6sPsAG2Cxud1L4ljYQ7mi
+          c168 izdcLePpG8+Jd8VBr9HdGDK6bPNjlukLei0NlkIMnBZmNrCM+VGO9FZIeIktA2tNFCgm3CNFjwtdF+rKqVIV6kVM1NQ+jmwxaY8o
+          804b cuPRIZ4GFTCooEmKEVmB+gj1FBqKzlibxrW4Hx7JxKkOsIig7MD/ig5cAb44AS/4MwXCVxlJl16U4sdnNL5CjqKgi/6P4c6QQ4UY
+          4f2f g6OIxT2ZEOJvgCci+PGQD32CjPRfK2e9X83wwaNfbWJtyc1nTWqg5gbN3LArX79iUNUtCcBzfvxon+oTRdlhCAfntsncwOpemzyH
+          f93b FE9AzDaKf/Hs0MFjgcLHNYZbZEHQdXDbWNrUQgOuf8D78aqaGJjtVqZCa8bWQRk28D55vBSDq2P9blbG0c1ieruh+2sSe0kQ1qkk
+          6cc8 tqweFuNrfzJqDytDuEiDx03UHPf9bvqNDalKhQnhAw89npR7GMlGWWyhnaj0pmMofk+Yeca0+ptlbVbtz9B0uZsUZdbEnBxAFaJL
+          2515 CGI/hocjTn8IdmSoDanEzuyOa3PAzUagE3hwP45FWfYCBXgz8SmPNcm/dYHTSYVzO1MzCy2smf4+Tf4iyJmTaaK1tPSATvaafD8p
+          4d4b SDijZbuPe9XDKgIkEB3la5UnfVbQlesOvjPlUWzCECtO4sEgOyfpwIB5RRXzdva6t59FXhJdwAj1dYL25oRVtdphAIdUIhosTGIC
+          1570 MFas2yiflRoT+0OMSHeBvf6oulSa3kVktUVUBZ448qfY7g4P3iTb1T61/awo8XX1tDRa4NQ1E1SLCuENdGk5l53ev+6NPgdipT7C
+          357d 8y/kH6MX0HSDdmnFQv4URAzqUMsNDS7OkJCuqvoG3LVIntzo8+3z6x1EpEIMmOYdlsaiw3TmrU6p1zS+2VhnaGMwqtLuGTsP5QHX
+          b710 VSTZsW7XJq8TLlLTBl42wuUL40QqfDY+dFhGoXvK2MeV06/hFyerTpdwFB0YuTAsdmubwi4/6HQZQSJY5h+R1gYk3dJMmviy6ppt
+          7c12 a7zfYE2n7DqwpGqIBOLwDrudZC6h1DzQVJhw/EfDgoc1oqC26vVEBCe8CLAGG7t92ShBJQNb3lkmAxERgPpRxGrCBicp9pH8xKEF
+          3f4a duBCTu2iw4Kq67UaThPfEfBa9MrxvwPsMSSHwQvoeQ17ag9BkRGpg68cpOMdE9rtJVR4I326KNvBUOU5d982G68S4dKSMVm0rYGQ
+          bba9 in/h1CwhKloHI4cc8L3+86sbnM+e6yb9hAItJnYlZFT72RxpGbGSlwQnJPVOr0g56L7qrryfTG+hhGxSZGtmIXgFpBIJZjEvGRGz
+          fedc QXdJdYNH7TYxGu4APeOiDvsTvmVxeY8QMHkcGRsPwicAew93f2u1OtrDXwV2v9w5ABawBhFww4+g1kuFPbERauTltpvLNrBXoHAY
+          0fe1 Diis5hQ3kJRAIYOjFyAuuxqvO91cUXDRLxzxWrGXsd2WsYLa4mcm80kD/44wrkCGw8NAiKUFIdsQrZS7uhK+OVmSwISITe+jhOGw
+          f244 7Y6KfFgMdIlued6oXYqNuprJ/Zhmd6YM2heBPXHx0DiebEL37UqYyRx/TYa/yDs9wQLSqaH+bdlRDYs0hsY3mtb0Cj/mUMnJ06zA
+          2889 vCHQONZK/zDK46iFHR1H66Etl2fMkrxchDoekJitLle+5qCkYq5E5o8tc7R7LeD7pkF1XndnQuwxjlDnSZ7bBnInpHnqP5LgmCdD
+          508d M+gq07GkQqroxGA7maK0w+0Z2vYXqgHlKvluE+GOck8iEGu+MVQ+1euJ9sXzbiYdAo5Bs4RYnSyA5eLld88K8/UlZRas9zKA0DMm
+          3d18 UCH2o+h691k0CjhXMPsjogoCR0q1i2BV8ZtRAMC/Nmf1MQeNkwDAwUbTjhnBaezfaDjab9Amk7v20PNwx4tW1G3+TxgCnvqR/Mq/
+          5222 QAo8chzyZTnzoGmWvvABNALyMm78hz9M4GM7w5Wu3SAhJpvjzQXSJn7SuB9Zem8ZbzyPFCPgKkRtoG45a4M0+ExfAX6aF9zlsWYh
+          71e3 SipZKgsTfoyr3X10o014cEO6exInkY3EOBeZjaRyTScHy4udOHaM+U5pQDDA4qbXFJZ0pJFGd9UE1ORPX791FBC7ofL/O1RM87zn
+          2bcf pN0+rCWz5EjNNOoLmntnpaGe8vhfFTaB/F8IeC7Z4nKpck+hPbQP53SpqP5OFE1Ijdi5N17Hg/8tb/5t9unRoM+YsQ6j/Q41wy81
+          a2be cQJU3wp5/iWvHIyaUiO7tAP+kE7FFVGrg6OfG1EVsBrELqYLv+Ks+dUYKwKxcJtbqZqwoOq9Bc4TWTy6/sWobQMqg9+oX2CV5MO7
+          5f6b oRgSwMlTJFUrJ7XZIpavxEExC/x23QH8G2e1A8RvMLIwP8V1CcWCrf+03ta+6dxQH5HmuSKPsICoV/ilJd7zfa1kIfXrrxqHoqos
+          04e0 ufsXpbCdB+2y5KoADAl3ibnyCxR9dfnHhCp3ZXbj2cOmqDMde2Tfu7cxIBQpymdqyzkJ6J0dzKAr9R+9J3JuSy0A2azek4tAJ3RH
+          b512 odB/CyIWMh7uiEa4ldo51zaHjSUaXEc18AYFFn9SBQiotvsFqADJcADx5lj5eWNPNCaMDqCQ0Pr6+dx5kMWUPX9f4Oje8XIWfKN2
+          dab6 5oqoAnIPESWm+D3kP9RMBqmmYI4MA9KTHXZUxppc2cH0pbS3peAGRcELiAT049b6Bk2I8zqrHLms/vo2Vayn9rfkvAu2NcwyULmn
+          7cb2 +zzwcqJ433SlV/dgyo7Y4Yyf3t+rDel7dKeaViFfJi+C9TsTosjUdhOXKR9TCq0PS3HDsOXG5ecZrLQHrqSevrOCwqYYkvM8tUwS
+          01e0 kaD5aJMstfSXvKCS+mUGH8HPbFkF1Om/HrQGR7X7WTP0sv8bgWDjVt9uVKSPR05/m+d1VX6mvSoGgmzmJRY8FKCblClzvQE8RHUc
+          2c0f vyhInaUbl9V64pm8zIUAxTb2pfCjiJcH3m979AJHgskgxLMZIYYAn4+0PSB/WPKwFEGChcavvfp2sx08XE7iyesLP8n4351Gv+iV
+          e44f dJD1I1K8S4xP1lDBHaTZvMiqaLfAYFVHZXmkDf6vu/i7ZnLev4tCtvIJmzADMQwC2lllvI9QA2DdWD2BMgg5RV6tl6z1mfoGE5In
+          a481 mF3120PZx06JQtoOQBx6QcjCAVBLNLhkxkKHINWqcym8eB83Pp8tsR9MUejdMdbxaTKzmu4EODIu52d9JfhU0F7Fws7Z3G5WlbnW
+          b908 318dAxutmbaWUFIjy2JIYBF39WrUjoIliM8tGVGTqtuXByBp2BigDd88x6RX1j6ZbLh8zH8/pdQ8ABogLHUXrEB1OOzuUDJrbC1E
+          fa06 8e2ozb7CeGV7TuCRJIuE3gdONhFWcfSyZWBNHIybM4SUnJUenOCi3eZ+F5Meo7a+mQ3BMRG6b3X+MHeNLcxvRNK2QhLjhYh2aKQp
+          204b gnP6f00Nle3WxoW3f/DwHK8bQ/W0CkfC0vVqzJoKBPs1V6vt1fFTtGFeUchgGnKreyUK3NpHNCHzfHByBPg7bjKR9KDmO10+uj5Q
+          c7d2 DwqgjcvvCvQUsXIYFQRdXl5WCmCUbs0dcqmz6w3la+Mr+sT0oo9F7WOkKyOjl6sLJJ+JWdHaUZWEdEPYB2AYQvTyrC+G9n6okk0J
+          da29 vxbL2Evhuodiv4kAwIfvjQDDsFkIVL1OqZPalAgVLt9i1BubPYqI9bFNY2Fh7rzhz7vhAh13abjv7cukMowfw+OPD4M0uIZbghW8
+          fc82 2wXAE/ZLJr2JLRBpvozDZp6RHuXREgfBPqnUEuykhNJY3GI+N/+/HWCd4Z37tPg9eupt692tOOIppY/x+hWYaJV4bvDbUih5zCUF
+          39e5 yTIhpub+jeKUu4SJihIOOljSaZw52/24OsZPAVoa0HJnYWJ8/sAiTUavnW70gLCNMMvEK0RZUGqnacv+SdZiqHBekqdek9Ck1nff
+          549d Fl27GiIL5TKP1hnN/Mk5/skw/j4iavB5WUuM6eEF3uF8TSqBVzj2wlwav5v7s7kMXZwEXzTCeodKhwti5n5ai3rrsg8lTXArLdJy
+          e6a5 GkbLM7h8SuNeyOorQ0TqyS9qJ73jA1npdQ8q7H9oPNzTiRW1K0035Az3nZspwaYZmOFicg0sXHzt9yh57MX/dw+5LC/mb6WZ/J6T
+          17ac C9eqt/6fJmIYG/qtNx3d1Z3+c+8O0m4ENupIfmcD5ycT7m5fomIokXbRn0Ofov9Cp3TiX5Sm1EqfOmW9I4aLuKfdIXfFUfmq7rr5
+          9521 lK9B0LGjPLO82B3us1DPoT82Xo6eI97IlMNeakUt0EaHBZss3a3dqe8DxpSUkrxkTwijg2VNt5+RgwEqMhEmWNp6QejVbsBfC9QG
+          dda4 U2ngKyCa53zX1aJC6cAwPN3h/f4uwEw93JEeWxJVYjn0AHU8n21/bSz9SotD9fbqUjZmz97SC10BWZFDG/CS5qCQhXGDfktf+aY0
+          11e1 RRd/z02RXnLm1sGFB2djptqS+6lnUHI9BNU4c+65xm4AeTy36vourfHPlae6y4n6ziknJuLWcq/IQcGMivr2end5PwJ21yN4JyT1
+          69d8 tza20myxrPovEKHT4tJZ50o+ZdyvnLF3VZE7xdSGOJSYuIuhQJsfrdIzy4CpZGF36iRhte4eEFCoegBRmWw6GxyeUrrBVLMl91cz
+          b38c L11nhzNQXIRICDIJy8Aa6edw4B60y4aYRL3d1AU8bdVWO/4FaHCE+yU7ShpLF4AWsPq6NvifpmQTJxCzLIUJBbnU1HDVJobPObb8
+          590c zX7IuhaO3RIwDi8BfL2abfAwKxD7SFx0HsW+Ye0zftxxV1wIKF9rVtLI/9pD1gAVR4JRFKMNwcSD4DMzSlKUjx5iSmKcUg3gXG3l
+          10f0 eLmKTprYSIYSOnU+puCZ/2jNLbKO7zAlkt6Nah1wxAEaScnbahbxjAm0l6rOYmYIrhLZ0PNEhWrDdLThxHFnCFA3rr/6W9rp0gZN
+          4cae fG9gYQSnP4JdQGRbbeOR5uele7rPrI7JouHC7K3v5NSz+BnK32KYNNtHAa/pY+JwKlNIfpAZYqy+InKX5Lky2aZKKwuhVtuaeXps
+          34a0 quMAzqDjWlYtZ2cpu2MIQbgFbXY68/mSVkIT5Yn5BPycbFjJa4wumN9elINHU3sn+yjly2TFbY1KZWqTk2xr6wLedRhWcF80Os2h
+          bcce VyKk4qvDysnqRKRx4TjBfmbjlDePQlXerYjZpj3nGEPAqAisS5NSISoGhWMN9EyINiC/4bzSXON4R6f1s3Dgh9CWFRrTSoSzpUO2
+          5fd1 nkqCklt6U1K+qWMpi7hhAbV57Yp0y7Obe8VquWMP2F+vswvedTtJ0NFJOFUKxuHbj+/OXXbpZkQInhgKakyWaQChGuGEFKtBvGR6
+          9090 TCsN1nfws7jFkXqBtCoUcQf5x+m/k41qpGJy2Q970ZN5dnstjmBj+GEIJs99Zwm+Kqb16jcVR6D+rPINQ2GNVbHzFv3u/4UZkVmR
+          70ee 5nKTZRokVB+KeJ53PpITO3QtDDx20RjVgcxi+4G00RjRul9VDiK87AVFh4Z/X22S6VfOZ1brRaOGisBp7KuIVwEoBJKfdRsMEBRw
+          6f9a IkTH5XM5XBPYs17/ofHu4cnrdOvydZdhPf5xRn1g/xHb4/JdADb7bRjAJwb/HFT5IDqIjZsUP0VxrzRzxisUASLanWKCpR+xEkJr
+          a90a pQiSaugtXX4ALqcjNRLSI8okK4zdgSy8eHjGqqhrEI53iCJukpjQnT8BuTFlwzBb4HtxvPavn7MDk29BKtHgkbDqQs8LfniLia6u
+          2e80 lz9VIw3Q3+Naz4Y6sxMeC4y9QDPqXT5S1Lq0fPC62MdlWp80CSDqJQYQ09knvlE35e9FWcoKEbMvSxiqmufHNYiPojWQP/X4T/xQ
+          50f3 jGlms9W6PSd/wOatfBFY/6pV2KWw3pk4kXZNOWiN2c7rCC5a/390qhBgc17pdiuArXHP8uyQpcISzapYmcZKhU09kBA6LHyz8LNZ
+          396b qHNJCF5H40WZQIB6rvCZ/DeBDnBAqV8fgk0a9XKFGC6QArKeD+NzrLtrxKjPv4vjnrqjpj1ViM2nQoi1nrzDisruhMELCde37/yY
+          2531 EsBXfdlMYyju6hXkVyY1XqGV5TUwy080EwAEopOo3A7M1/jcFFGpVXbvmz3X8WNSvGLaclR/AuuEm3pldRL0BUbzCWTXD+vHwb8O
+          d239 YBATSQd6xwdelk+gVpUwS+eQGFHVyb89dKzioS0oVo0WGHuWyBniM6gIkhw6SXyZpG932+mTpnW0ohnfKvptVNbYGIxVChIFKGAF
+          9a04 HwlMmmZ8x9qgUOT6IeBWp6lmKReN7c/mwyRhVgXKLVycrMWi1bssw2ZEecjp87+osO7k3bPmPgNUFyw7Lz10qamXXjHcV51Q9mQb
+          1dad rs2IqZeLB8467wPDdRN1txHv7AGP5SdStRmQ3Z4XQEeMXUzVtwBS0spX7CProy4ZFUwzZFVwYcZ4S4BlYqEAcIijfwXktmAm5wuu
+          d779 1dKPNCjRy0p0KVnmuLQCiN+9W4wiFJ07cs+oYhmS0W9DPxKv59R6oWwd/jo7VzddjgFoeyxDbLU54c4Bca99ZAGK9emsFgeplwdr
+          16a2 SD0KeqelDVkIm6v18Ii5jsDyGzkmDBmnmAgr9GrNTKlSRT0FnS98GRBYsYBURl+uezZtMdYl2UeTf3hXALT01X/k/M02jblBXBdi
+          4f15 PCkXh9scioz0/LPkd+HC3bouNFQfJMBYHZLe1LOeLIiK0auDdetWhAUsZH3wUIhPlmOuU+ObHf6N9zuv5MrNMF3pFf8JoIK38N4B
+          b1b7 ++qG50BXU0WCt6rc1NsLjt60lJ/w45thViZghP3nxz4k0FjKSwQbPGHzaNAoBQt+TT1/j5epc2WY+g0Ga4ztMJ/jVRCarpl7jKmq
+          81dd 7NuyLI14Isw3V4WifM4mFEsYkjOf4zSBrjO4f+i5H+jMuzt+mOBjwGzX1A3IeKZDKl/V9V1p2KuXSXWWJA1jymPFa1IZberz3MWm
+          5fdc dGDWeI81sSilScADUYl7i1iShTbA1K/Q8W+VrN5RZuVDqeG9ZMDHkUXsCb68H/03pp9OFW1SVVBrZYPivvvsDRaGICkU6kv+xIPg
+          5e98 cCXPabEcKbNtUcgOhibfB5QPpYJNHB39rifF3NXD0R7+IU4vJo4sWJnmbibJR0puGY09qfZcxSgH9twH8YkZgevFun9bwhstxsAY
+          9532 3JskkIaAW9HafQFBFU4DZezVoVabg0HBzI7dk+quP+1OeVXB09A+Efz3taXUK1JLIQZWkWZjbJRLPt26TO+TcSdAqIikzPCyR17f
+          4be8 YrvnIF3+5xJnQ32b6X/Tv3HaM7CUemgzMuuf05ovXez1B9ns0Ug/RMlblHyrvv+0SyHZ5tDprr7xrCljtTm0qEJ/KxRSg3ICjwDl
+          2ab2 cgP/gbRnU+7ZTA9XLRJ2xhO2GsN5GMK14ChznQVT7bvOkl5Yx6pbaYZHSYqjAwJiPTuloOtY6IvR4N+u4UE9Q7oDCr+ECj4FWkTW
+          6789 KAsTaPmsuykBonlxT70ciEzyjTkhqB4xdSopff6FFk8kMNsl1qDkwTdixGh2TVaOeIcMCEbznq6jxyb1W1AUfFmeS9SH3gKtJQNZ
+          82a2 +j4GEetFk+A8IqWBMzrTd37O2qw9Huxvz3l7l9BrDFmHdgDS4AW2LTvsbLSf9HPtfaVrt+QYxdgl0h+p+VB0tn6E0Tn4lZbTkBRt
+          4bda gya5K9A8c7fDMBlBTyFOXLLhW92/A/ym00T/d1uwZyWnaZA0Gtn26TJdMux4sdZDLkoa63MkjMgXiJrrDHa6TaP9l3QufgyBwPiT
+          07ed vPy9Cwswdor/a0YhM9z5Ok0F3iQJfHuufqEYCcGaDXoMChZ5QtXhCn4Cuu8fAk7Wyn6B6oXaoU7nCguf18zojiB0F8vrzDUh1Zh6
+          70d4 mbGia8Tw7xCGDgQm8fcPEIGN2VT3uYRAsxH1a/UfkY8mS5dS1AX+hG2zom8T/HZ6TZy85+0QEeGuEK0qKFH4A5PVBWRr9JPRKmgQ
+          ba79 +2rsLV3Nq40e/jIp97cExaiADIZF1a15u8vBPaEbaZROZMmkGGR+K+mGM9e2mG+pDOAI4HXhe5N6/zKAFF0jfGDsB1BEa4hKIYeA
+          8b52 4WV4t/FFnLoCCVuMuIbLdKMu4iX725+AZhtJm4VJZryZKWSP55lzGCmWhmLVJdpaQ0cvWKEX4MOkxAaiLKuLjcwqiUSvKeiuxZMH
+          a94d tkCcmGyXOL3HFgIGypUVSvArhi/spBj386wluJDPSmINQYsx30x6hJOTKBJjjDT9FDfmhr/je/GJEMKIfe0eK1nHgyTSlKkdLRjU
+          11ea KDR0fVctxBx5kukc1HQ4rJku0mS9oBxkC+XVCpZR6Oju4ZHZqJOWnjkwF90q2YybN15yvtEDlkVJsA3LsMj+3nLyEWS2KU9kCAV2
+          dac0 nYf1s8eD8YEKWRhoNkl8ap59FwQSQyXRjCaaGkii8pLHhAYA0di7zRzLZvJsfyL5A0PrRQg3oZLuVnoMI91lU+oKPqOKipwp4zM0
+          433a OMD93+0E0d3FB4Y+sUOJbSmFaimTxo9pyL0QyepvY6BSkpfYFUk+6JLZgNWeGidQ+MAi3TbgqUZAQIJOK5rwicsExTllscqB8PyP
+          a4af f9DBaQamOV0xxvKmhJbadjLd/Lx9uvWdxYJpQ0wg00anRI/ixD6UoxQJkOn/YDcb+0wSPPDpGQC90sgg3f4WJZhUoJU4v9EvfNlX
+          66de +E+U7z0gG5QlWShKFh3TKZe5yi8umTPy/P9ULh0pAp+zHmqPpiF2wKEShvbmrL4CTSaF4Q2L44Lllo7RlUxZVqINOsJ11bzR2VVy
+          eae7 AvnBXw616Ez4UEGnuvUZopVxm9nmvonHHxhqhd4kcq17FIQma0d6PxjldegxgRgNqPBvNJdh1x9nmBWB+sYX2beRyLFZ26gbcGEB
+          2165 E8JdYFOBjLoTLp7XXn5xJqQt7gweYE5oguc8hypDra+ZyWTFW2qK86b6/1ZMSeFTFQxBTwfOUY+CD9vQ69wOIo+ssDMLjG8uNOan
+          45c7 OVHLBRU5Mv8h2PcXi7RY/d2yQEbVoT6v/4EYWVafrYyMqsj7sq/XK+D2gHzqLZOHngWHcD3kzkY1O12tvbJ1UQVNiaCjBeeo4DWi
+          79ef LxaZuUmB12CnpmZ9dPHDlmh5hmUgeyEKTsfS41AszwVcutxs81hbyuPzMcP6bdi7cwwU2QvRyGR6d+/7BoN2r0pkqj1tThcFuaR7
+          8cc8 95ORhouo85A+kCcy8fag5HdXLiLbZQFPB4Oj8mpp5wFH/tQpMywZmbssOQ+TZs8OojIhFH5Y7xzy9O0c9frc7EMo4A9GfO/VseKr
+          1d7a O3RYbnSJSMLRi1FQ8DLV8vjmgRkdRdw/1FzXbmhQJQN2usb4Rmh3ON7IooW5IoBUMJJmXX1T9NOmEU+It06JhUSEs2t0n83ED3Un
+          f2e2 i0jeranncPpYvoZM7V5eKjJrcAIdpdRB/dWpJfZthwGAzS+cCyIVXbXEeJwc56IED8R4NWtaCUi50NBO+FvRejpB4ACOlRafSJRp
+          10c8 Jqgd9Q3f5vHJFrZun+Lel6YOpw9TruxzoXXrE6jpwQIo9qdKbWSiky0hoEilH3xLbYrXDO3pr0m/oR4WU024RQoL3LqOoZ9Hn8gj
+          3b22 iO0addOR/PdfT4mBJkXkDsiwuB9Jl3VMgpsVzmNs4b+onTbliW7WesfHCu/Zt02rDUbqn5joL033bgTy+t2DXOWIDDP3qJT/wClY
+          5e8a L7MUb5ynr+qefmQ+z3nCFzHCZiddkWz4VCH1IcHsXxYJYiO6nNF/YrFDDnuFA+FMX63GABhXIWubzttLYZuYX9cXkh9+hpKqOimr
+          cde8 WgyC+yG4q+WGxeR9O0wa8ou+oWyPp8zW41H7+KYt6+CMKHAzqiYcvHiIA06VnkLruakMoz7Ggs0v/Yr1hy1yifKcGcnyqOcI2+3C
+          192c iKpDP2dCCopQvNSmVmBdJwxRxxndz3X/aiNRVla8oN+mAZCu5Q96hcIFtE0f3pDYLh59pSgXScFpHt3QPmmw9brnpd9MTD5e0Ksz
+          fad1 w0nG9KcWHjx64B0s1RIWVm4uo/+qwx6/zZ/71C5z/hO96ZvE3cqu1a133w8X6Iy037AHqCcqdCNoc3liVSciD7xxb3QuJ0zf0/iM
+          f3f6 d40eUDFcTo0I2xxmhXw7/kj1aHBb8OANVGdgU5ks8EEFXrG/oKGxR/y6L9An0Z5L06PpeMjV5OEj6JvXBY5HxItT2Y9UjO4DinAQ
+          9a84 KAC45A3chPrJgonTg2Uh5dD9WUQSgz13LXS3xv+ZgfYL6ifVp/XKylvKHUzxVMA+6J4255F/enP2teZ2zAiQ6eCKaWI0Y4eZJqd1
+          a396 cus9a/ohP4tMK/8WcY16XohezfMksUbfp+VIEW/NNjpT3MIj0O01LKjfuY3X53IzknrQrkoQDaaLYBrpm6yPfeaAqgFLPd404kRN
+          be28 UqoXCeeSays1DNVn/TNq+dhK1lq99h9yjn+CJjW3u2pkl8FliHqykIQpYBUOLLpjTShhe48u91FMuzKSNB3EZbWKtDoPdbizlJJU
+          aff4 7WoiTyrADQ6qUvLaf7iYU0icDmo+SdxEXn6ajgW/Tv59oVezlqFcYZNiw0kYcV/Vs2tUmr4uyBy5M18JBImXAqwX7TtphtEgPlum
+          e2a3 LuuRAAXCLxBoHFB+e+KMS69lR8/HfwdWLcT94wZ6ssivH7LwA9j+ScqNCV9jvHh/AUWoBLtEjuc4AIxrP/bzx2yEyYR0E62xEvrm
+          ae40 MbcYHM3valbN37jhP7O5sV4iG/XDEE8Rozjrfsf3BS5M87eg4RBOhTVVSwx/ELZQjLKVo+JWB5v54VP3/eoe7XxKdxcmHb69YNdr
+          a718 x40Uqg2E+YehrDawMfL3eLPvaruNWuqZCFg+IIuwZ400SNWQ6aJxq0Dji7+znndIrFFV/Ka4vIfUqIo1PQaZ7G9e7bbo9pRwPzOt
+          ea2d 9MEj/a/vB7pC0igsoEhBwj9Wgv9RJ+dbPimpuSJYERiBjcMv49JlNpmlli7VCBXOF6Z3iPgKtKJWdIRC4wBxfms51U4HCzn6cwJs
+          da1d 1I2Ttpu7c9Z0Z+Abpxed2uRphPw72DF7x1jMvmmutm56b6bhqBhhHAiKuJCAgiAmSKZ7plF0q2qJOm8fBSye36JDlOfhnMKaVrdK
+          4836 utqG1E3M3NNmiCYY6OPhUL3pZvK45T4dY+v2fWFpOoOilCm2NH3oQ0OMOxGPw8XEdqtRT3zBYQTUJ4X9ejaR/juU+Ia32gGv5cFu
+          8a77 1anFVFHLWrr2ACNrVouudaAQRRrdDfHpfR9hNVc3wsVRk33de2sacWNqcOi5RzZN5r9swfxec5QNkFohRkNtV/o66bXH0mShTWAS
+          aa7c bvmqvpl4IiTNVrtaFxkyH/ojEjlZyfcHrmNXkMo3k7/jq2y+holB7sIOaiezaXyUfzKhLZ/vy8BB3NavxPjSl6KY98YVdoP/6GOA
+          6fbe nZyQvxvkqoUuKulhDMF/Nf3Qgf5+zvR2cCWbvaerGFyqzl04ESQ8xDW40/q2O3rWyYZ9v+aphCdmHh47kK4LPc2qFvvLmE3SKHlD
+          0bc0 vBUQ5tMnsgu2mKPbGcUa0XqOYax6TXUQCgt9en0bA3fb14jVJd6k42CltX5vxoP16tWOo/1dsJnhsXdK/sfSpsr35NeHOQrCvIAk
+          62f0 h1VmAaaixmtDCb4wXiiRBsxqg4wdzcAzjwlJS4nhYRbVR1F9K7RNPt6C40/i3vD+D6V5Sulf1byBKTejdOnJ8ypunhY957asuOs5
+          84ca 2U1ssN6BSXDczTIr7XLhXPyOCeg5WqOYEWrBYTyKF91kqtn/2Iq9r8HfrSxtjGkVElXgWASCsITVbz74rZs7Rlbl3vpgE5E1J7CY
+          5cbf 9M5JsJHCXXNqyKmSm9CXpVhQI9+9w3/iue5Jcrv9BOdo7uIgg0FzXodPF1PbWu2epvOR4HfJWUD6ABQNvi1eKl1NRSFDrsj9oJUJ
+          93bb Ak10szM24jVrW9SBsldzAzdhJMfYl081ZK2e3/SVck6E4Eppet7TzVlI8T4wAMZt3exayHXtNwh/E2BGlaTGjK+EyQkhkI8XVgGm
+          3b66 bt7Mh9P1bnhmjcsbV+VmFUxjkk7IWOXUh1qfaGt3qp7OdcHbaMMGWblfk0XwTei2qcTcdqIjw+uXqXSbNMrpz5VMKQU6VBGdfds4
+          bd07 5uV1e9l7huZbbTY8JqXpBdG8pXM2y+xswrIVxcYqOn3KhbYyT0YoxX8qy3uDp99PrEoxCSPhWp+dlIJMadag1tbbdggRoU93PcRA
+          41b4 NneuIEqGHQsA+ar7U9jTMBH2qv72db8vNGbw6iln5oZZMyGlxsG3gSKPSaQRDM3bUk3yG5Za3ca5C22f/dy7AyLXWTspsNjFj+rM
+          d63a cHBfb9fyef7d34teQWVoI3/+EJ3kKiAIfozGzbyXPlyWOs1KSTCJSpMaMfFHpp2ClBdpcpI/9G/C/uNcKyJqdU29Jz6iBOM2vIEB
+          f1a3 MsBCehcVzAQaAVNtYkLkTBIzfQUaCWDVsTL3IDD2o3AxbZ2UJ3VomV8CAbFUPJ2inKq5X11MJX7INzaM6M+1HyNzU627JmA82wOH
+          205c cVVpe0iovYB13k0ozxUkSqRr4OAJHyvRWnUzdcVT1HL2HVG975Akf+8oMkU5h4JwrITMqnPBohOf479aU8wJBlvzkYyZhodnTgFU
+          c8f1 zBmDM/48kUpc2bQ9Qmn0PZVukncqEsiqM5XLy6jcZsz/P7JE58hSeWK621h7urKHcpdFMgvp4hsxH3+yB0QpH9pMewx5D0DuqdLR
+          ea35 RYt+KcmJmc1jIAjaGgFd85NY/6A/3oFGH0pRnmvYhr1LYaoLcRRnelAx64G/KrtsoTtrswPiKEJU4WOECX+E9ma/II5uaGMVUwVp
+          04f6 Bs4wDQlupZvx9J7hqAm/+dK+3qzZKKGj+V4kXRjEWMWL/nkEoX7VAUgPiSzPK5YGt92x/C2nqXX0GG3tWqTM6FYnYyw60fZ+qcaq
+          e0cb 3ygxZZAbG1+oh0j1E6bEp+aYZAG4EEMQssUoaOXjz5NpGBUYnOxic+4Lh8vRvRZFR1lxzC+pZ2X/I1PFwPSHJ2wMQEQWPIZngNYY
+          6f09 llz/Dk7so3B1O3eyJqIbDPutapR1UXOkoqNS4MSMTOmJtSvTHtLpKqsvpKQaXvpJPootTqAhvqxMSjcQl11MkKMlcfzywtT8kztv
+          773d PKCVm01Z+q4RluIuqK4KrrXoXvrjziYvMWy4oc9z8HuQ785TMIbmMw3hPsxeO6jr9GH0fZGeJ7F19U0XdHxDP+5pl0WY54J74R0S
+          e76a coLMDSptdigqYwIxwIOflPrwN22o+AozcpFuphPRrVKqj4H0UJM8qm/hp4WPb8lx8KYWCx880aXy326ugPbxR5IShSowaUokVGeT
+          eff1 CJxtpXWOthJtoFm/1D/83vEmqw+YEGO1f7OXMONG6w8RK1fkVTM3azaRspNIu/zIZ1JqcwzlQbwGb4WfGdrDwRYMe68phTxjK9KL
+          de44 aXtfJpVMplkEB7YmSXKawMoReF6R+impeIRPT8+m8eMpSVGYVBAFu30LW1Pyh8JX4So46OEBRfFlZs5qulYkyFFeS/8J1A3UsT7V
+          d16f Y8Fg9glsaGezcrCae2+u05+i7+tt4hF0btvfdQu3l9Q9VFjtpwK6nIkMbBdypn8q+kDy1woGd/sJ5Aljxl+i1AKMDJLp5uvEy3xr
+          9593 qdeVxA4pX5kE4gylRJfalRl/DKkcdUUaXFn7UegdpjZz7k5+3wBxcj/gcCmCPOam6Oftbb0XnoGRozzPcVO6jsO+jHofDI8VZu40
+          7702 QnlpMpHo5QP+9SInh+ciJ8gR/peAaB6UkW4aDMYKT7zgX8J8xvkQhu5YVHCYFNaEAw5oIqGQe4DRdI30W4z4IzEVgEpWeEbis14i
+          3e66 yXuYHkTgW+UJAH0eIYPVkU5IWmZSSgA/cZWNe3TMNSn/9eQ3EsE+6wrs+XeqcYNi6oPqdQHLV4i62nkJrps5PJBbocuymaj/7IMo
+          f225 CtwaqaNtdDxtGDbGDyyhoDdxnF+i1w/HT4u15tISsv6EfbhRCfid1lyfbsMJu77fdV3kWXWWJBO9g0Kv4Z4oA+4OuPfwvP9mjMU2
+          f87a 1sXIp1KTnpxoZFv6yfaPL2r81Hp05/eo1DTlE6aOYyGjIO+OCrwGEhueVVHFRAFsVmJtQlRgC1NsoMLfe9aqgoUV2rQVb7pU+OID
+          4d92 lsjW9qEXir/SBSANYYriYnMpmrGtIyHjZ2K4K5SHu678B2EYZLyOdAd42YVHvNxMtguWRXScgiOfQ+1a1DDe8XTkDGIPtFK4oa7s
+          8297 gMTWKbWq3zSEbCGrIBhSDwTI+iWVfL0TBzkO3bkenzJI6znHtppm64OBKS6bMX4www/5n/6ue7TnTP+gsk46IF7Tmu4uMRXh9jHh
+          a6e5 vHoqxDPbzHi+JPUEy0XeLxdjUTulGcqUU3Y1qsRHC9RW1icNf8HTkDkD9H8nPFnnJHGVrxAeKR2vhDX7vMMNE9Vz4VwcGI65F8Ue
+          b949 vw/HgERBDHAfLBy12ggJL/U/4vxAM4XixcPeeceTjSzDiyqCyf/QNVJWxZsVWliV5YwCe9ZWzi8c4WiwFsNfMsRHFAIxsP4izcKu
+          0bf3 GD5NB0VsPQJIPPG3BT+fEsWjTZuVhPC40FJJSncCk2YZWmuENOMUuZKgSqjL9t8BXCuLRoDhXa+I9dY9seFA4QKjabIkOlR7I71v
+          9dfb opjjHqdZTnglp7gYd3tT/EcPvl5jDTl97EiBTKB44tbNC8XzmRD9pkzcoYGPLgLH1l7SGRYR6FIaDmODogx5gxpbaOTUlubAyg12
+          79be PjdFLnqoSwJVfQAl1WWnl/EZQbpGl/iRQ/Cya4louoYI+l86i8ySUB15EhQah14q+SyRdGqtFTNotdYgWq95YFOvkEcchV+rB6La
+          c2cd fzwW37N0bYRg6njgqmw6Vz4I/yzKLvv632EfCu0NkL3SqBepyt+6YivE6ail4kvRE9vEYXafhzJRMDlCzBIw83m6Q0GhvwMHYGWw
+          daad qUGqku+134zzaY073aq6ih2CQ6t3jrTarOFuqqNxLYndOcdb0ZN/FYArVuZnozpePjsQJ4AXeAdX2JFuFCrFHVe3noF5iw/1UfvV
+          25bc 38QLlKdZ7mBgXRDGJaWjfnQJ16RZ0wvhPGGEPgMF27hjynpwkGluU9xqrqswaJVlEYl9GuR5X0vlsNG0on5Ep92ezCqIYqUlGU5u
+          681c cmQqFZS29QKR8lNLiXc1E0okppiDjiC/xs7zOKwgbt+3CA3XCH8mNxR2IqOqWDplqQESPq/vdq0aecKqzvntPVAMOp3gN4U4Zv8M
+          1ff8 HvRFEXiejFX3JcutP47KbdpLCDd4LSZevmwxWfB4DM5wJ3TmeAL2fkKHMdPTLmRsivLDRnKuyL9XE4sw3E6Iau+mCTUfxDu1foGQ
+          b6ca h/yxqwPu7vpMMoQ52dgS+yU/jIWhz0k65Zt3oxyBK0qSt6BP3+dZWzQEm9DmGW67Rk6VCQoQt6NC3yTXMsoJnlOlN6bAPh4YgHcl
+          72b9 mOiI5ZkJ+s6WiMyFrIDZgsv3KDBR8aHw+ZkCOfsrO0nzCXVCYMgVa7AtYgiqBaQnMdKx9fCKqpmLZEzaEc8FbCsds80xtvJWFimQ
+          056b 7sqw9GpG9KL2Lpbt4/pSyDaOt0KTScOu3dnFcB5tb4Idog1PkGDFqI3cPnkFKVFhBBh9lHOvyhIbGAaMDYRnKqp1pXHkobIysg9h
+          d2b4 K6ZRvcI+AvO9yraMqYLwpSdONOjcL66Q9gCWRs2lY3zYcRzjea2Wh9LQRvHXIy0rrPtqXP9cTf/U1zM2rt0lwei5GOjjfy/BV1K2
+          dff2 NayN1krbPX8SG8a0EoznAXyyRy/RgzKMvxxqNrrjSgMGBLBfQJC4krCUbCwxq4uiOB9e73wHC/ei0rujSKjrX0SJqUSWbyEKxPQW
+          dc18 jc1xtUMVLu8VqRf83dJydfABUs6IoGt1qOGeaQgiNxydI64m577hP8BiQZ5RWyZhmCsK9jRmrkcjTjJNin56p7HXRWqWqiPx4Eg+
+          e7f2 CV+jR7AQK5uqZnlVU0aRMHWEa0DENCzxoTta+qfK4VtQISsX3ZbUvQsFQFRcwwl1VTaxmrw8Lb1Bqb7EXS60fAk2pWZOMje1mRdp
+          6e9d qN3nKNSovTNqoZ8UyEv6Y0KksTCUnBOWcqIh2Vc4n7KmFEGARhkEuh27qrbqRkOn62ItIETiXWPfJZsKCRMhN+LekYrFxPZVmhYG
+          a423 vgGjw7r28Bb8yW1Pl2EwOnpQRIF5llt97d43vB7gRzjjlUsQr4ALa2Bnbwh+DHZzjxW/2d5avWXyEBXZp2i8mEURFVFqyPv/LtCn
+          3204 IZ6QPrMYFlKfGkHoZ/DLRnXCxpGM8KvEGg9YObhlKmfoUAM+XG9/HaBk0LD9UEYGXR9fFULH8+KkrvBM0cBKIDbspooT0sTPOcWi
+          eb4e eQ/0kCpAHQTxROtoUr8wqh9dXIFbib7C9Fr0TPTb2KK7tUGZ2wH3seZ6T4AK9vNULlNjjHwIA8G5dsol6qP17otjeRQR9n8VHddU
+          664a IEj180vE/Bpdb3ngqGz2yfPYKPKdSR7d6d/pLDMGoUqKU5lg/lSyDu9JRDjH1QjzOIFoS+FPw3+m//YlxTPQhyDr1Sm9XUJ/8+f+
+          efac STWIY0ljD0S1ZhVf104OB2e52EolbVRoO66+wTZhOx2J47/6A5JtHirwWTqV8QLxFfV8Fufu/3Fx7w7gt1315A4SwKmacH8MMp7d
+          b159 HeNC9PEKDTIPozeIg01tHypqUSMzzU0IuWoywsMszMRF3SmDuOII5JbX2MQNhS7ui/4eFKe8VCuabR7Hfr9KG6+i4+0Ga7xACWdD
+          d046 UeTbQbmA8NMPlhUJQoR76Y2webhiCaFvGT2Mui/klC8AOGNcTXf2Q7wg6QL7u8cZNakQOIZFqikN6eudxqSxaXUriE/WlRh9KvSn
+          e45e aK60+hsSVa/uEYWuIK/6ABJAlAR+osHL7ecDa0suMfXsgyRTX32ANq96MpzCX9SiyUjVyqAybGhTLj+PVmBpzo4VloYNMzTClOIc
+          8fdf G7MnlOWSPu9/NUjQOCfB36eNQVUqgVSMTW8CdnVtsy0qRfNZECR/cAK0o1GBedgDgV0ev5WyiIbplG53RAiX4T75AlJqwTqhUa4C
+          9a2e auZTfdriD7TzL669h8xakCiZ88vj2E39jd24LEP9rRI7sOdkQbh/9EwbHdsz1Q88UMKDJks/dSqEX0cbJJ8Za6G3FNmNRwuLaMD/
+          224a /LxDgG7lEtBAkOlwfDI5afTCdXNQBV0TKUUKyAQG59ps/OGx5J9UdDUM73QrumOcFfdA44gCk5f29NWg8wT48e6XYsb5/64f8DZ8
+          06db fzWGf2LsgsCz/RarIgE/iwv1+YTfSRdx0icVP+UHH191s0iQt3x/gDUlV4kdWQf513AAcvzfQyvp8+PpQfN5MAEkegRASxggFbb8
+          8fdd SlDaJn0e1/mj/y9afk//8cHto8E/MAszXCWQX8QVFXkAaUEA7Sz7PxnI8SM8jR6gQLXNLailR9seNTFAhpMguZFSZ5xH0ygpqncT
+          ffe9 xo2O+7aw9hJIWJ/xb4Kboxa8XhDIGmDSKhJ0uWGzF5DTx42Oc7Sw1x8feX2g6CvpS72pxWKpPQZrPY40891CL6A7qzWq6tsuJvkW
+          1e8f XVORtCFZoLm9Z6wF5XZsczJHtz5ZqQ4CTzXZhX6er4+kdzssfYGTq23FV/kXU62VlTOg0xDtmLnn84/Ano3aG6q+GHLYiGHGXL2u
+          d072 8WSSAFqYL/+QxscoZl6ZyFFz/PRhmCzE4xX3uPNF4tmMirQ0J+Z5v3cyYlcCEj3A8gW3TxN8/a7Db0g4hv/ZiLeKdC7R3JMPvq05
+          3c24 dtR79r6gw2x8cdFhmJTpa84lQngUK7cPAvLk/l9oGtChdRDdP1LJDQnoDa0QZ4RBSeQGndDyOS4JyWSCwWp1JP08TLko6KSEGaJp
+          e556 vBkN9c+6Hin9ddzkvIm1c8qmXsMViS3okKJcLstVvGf19GU+y9d5B/n3rIKMVrPC7oIwNyO01OrMXwrhNDKpzSahOq8CjLO7y3ee
+          ba01 AAj/VNpaSotBZ+d6srWZxkDQ7n5YRwMz+mOwNQZkC4Y6XPxHviLTWyT6FABk+UcD86nG0rbOnRCR6txO4aca6ONqBE6Hwx9hCXGz
+          4df3 NwWJF4EUahQ9bXEVYr8KN/lpvcxbvHcw4I9/qALOvI+PBIq7kWcAq5UP0NDUmXimZ57Gzz18jDO1dIU0ZAcIKbeC/1/q3hiVdDH6
+          7394 bwByuMZwkr4Nx0daRkJ2Crl1ctkde0bxYwIaoy18/rbtEiFwfXODya1+hPvAdvhEc9KT2Pk5dpzKKCh6uUC0etS0elxsn3wuCvcp
+          1d29 R3jP3ir/Z2lwVO2aaIy6KEp9uAo2+En2tfW3YMUGOwYCz/7s0wiOhm/WsVOoRxEQifu4EgET+850AE9BcsWjhf+9fryzEP0APObW
+          1799 0YGVKzBFXjg0LELMF14dIvCES0KaxQW9s0szki0bwuLHLvfg9XhUVvPe8aewAACzt+8A/tidu80ZPmS1Mavq3amFU3aaF1XM5Hvc
+          0057 kiXCLBJsViAy0aCSsGlRPNJqUbVyL18Xnt0i/B4wIqofs049PLHrUnyoq9W9g6Rz54+l0bqHyfGpHT2YSMPY8QAXWk5dxGV80yVY
+          37f9 15UmdVhzBtvPglzaAvzFrLzcSU+H12ha0bDUOHKAsEXchZ4KmpBk7/7pfrJYXOHk+3BJu7IMMpUQjhNDDsn55W0slBban2xEuX0u
+          55bf N6kBlfpCvFOnl3qfdMqoa+hZX14+u5gVtls5gJytkVCrW0KQbv8jLI1DxCzylwmO08bxht7tGVSdCqmSa/7sdYjub70NBQJCYcnC
+          ab25 9J99NtOley/SvTpo+Fs2F5QJ/O07QNxa27WMCPAX4TaseixEOeB2oN9yvQYmTp7EVITF4wLQ6vdcvoHupcGZAu8CgOt+BkDnqqOl
+          542d XB4oflUkBfHoka3p3uoTkEauGHSBBJ3sPf1S7ZUGXwzjdjE9tywmDOTw+8R0TVY4kyxdm8rJGtAqnwarjt6CeKe7l/8m+pcVpP5W
+          5401 jlwuhh35ggMIPJQ8FP4YSSShT+DKTWeDUUIiYuKcJwa5IT9HtVRSYTBALTjfq4dzME95kKNOs9AMLVu2vbGIddfDil5/ghEqjPmZ
+          e113 nFeDgTr4ZdOnZ8OcDVEo4T+GCW/srpViIcjKo64IzaS6YX9AZ9tpfxRVPEci6zhZ2E2Y1FQ6ub7AqbjPvAFq673AXYUlF9RiDA4J
+          e2a3 oJQe0+kkMCjoq5VQ409bXgeGTJaLz7J9rU/Rb/OoIDBSOXOv+YXogsVMMoPe8AU8rONoIRdJaBIdSs8cbPrYsu2hMoO5QfV4yEEO
+          b00f etbRGRYyCJK1n0JMDJz22TyBS+oEL9otdC3DBdbm1OSWM5tDBTCl0kSvsnQtZSW4+E8Ti7F/vQ23ZNzBYyrv0oTGKeXF3rC9liYa
+          99ee 8vFW26vOq3hKYGRrnyYUdVtKSrFHR9k1WVJelo0177vbTZ7OVtLc/GubM+a3AhR5VQQT3TLXcgGi1+6pcg7fKbXmqNpN9emjlC8a
+          a22d Ub8JrrcKyq5WEDxVo6FzkO6EPc2q9jzKz8PRP2KMBZHc4W54Ne8rrbzV//rH8r52y07VDHeMRfTpZ/PvgAV+bHBFgaHK/vWyFs+N
+          10d5 HRzJ3XBC1006uNtVt1bnR/cvyz/0kIKGKB5c1dVlgDcZK4swNKsa5lYnLyeRMMTcnggLKHT5jhz98L6O6hsCkj5u0SEgc5n4fjSU
+          aaa4 ojtoqtoJBs8oVwvG3uoyCOk3v1ZVnJES4BkAeKlE2ik3G7Gn6dI79UcRyorIAPAkIlFX5PZ2c0kqf2pXOfQ8DHkn9Vyu6kFimNss
+          533b mbBJww5BaDdUqPQqsSxJoqQW/fHQi2eyjxnP0l81vUky16RLhrBXXaWRbJDGG3Xfw+dpjDuZ99BQVlaI11g1obbvDN2ALN++yoEf
+          d820 jU8pAPlno2RliAkWIww3drDqsCZqItUE8RZwvyi1lrsUUgXYACJbYh+vyQvZOLQa+Q1Y7VEsSYsB6oookWsg0D6deYhuDSVT3UGO
+          67a7 tsZ1cIITGQFo3TuaH0ZPzpPeysRMrmHURywTM394xt9G1cLSJk/MrRCXXkcndRsanHR3Q2EQ1JVM618y+tzCBzjxOIgFpwqJMLn4
+          0cbe dDCxOsMpDkcMBESPaRa4QK8Un9Dk17tAjamQOofpRt9l44aeogfa2jg/qUBvOlm8KcYE2Q6Js6WihEa5h+SyZ5e654m7A5IyucXV
+          aa20 u4eA5JylnL9K9ssRgrCw8Yf8y8Z2NmKqHenBCxAszZ+9BGExgJXg557gbYmNkON5vKbgurGZ2UmGgO6YWPxUWGzhe7G465zl3ws5
+          f30f cDSPLcdBRHopbfa6IPuMjN5gGe8LF5KNQ49T3l1SRRd1ISUyxoN+f8CWz8JFpReJB4doLM2FWWmZNYXquzLkewXI9Nmu1JVGseoE
+          ecc3 +vTj2CyefxUW+vS2tS8CbuoBhOQ/OPOxtIeHSLugKHx1wGTe82Rdocedj3y4KViBKF/dAFCFNiCiV453zRkhnP9oC9WcFI+a6D8h
+          a9af eZBgwYjeT64aBJtrTHGyjh/e/Fc3neTPwbv+HdmiOEy1ZfV3/2EodapNqzlHX5r4m/+0d/xgCbp9swFDdNHtiM5fPBgtCOXAkf4w
+          d47d nOajgLxbXTYh0OFt4xngV04bklXEuH5dc8ok5dZcX2y7uPLRRR6GFmIIjKk3a7dAWk/peQTi26CD+oPQLZlLoVDhzyE6athaTTaU
+          f26a yCKfjPVJ5GSJ4A4GptM0a4pxcA2qpjlucWEIer3f6/RKeuVoXuQHBNlYGG5dCnQh7JtxD6Rt1UtCIK5sTzx/WMsQEDnpZMSFV4ZI
+          3c45 bv2d26tQUhjtHAbgNBfJCm5rBcqhEhC8/VZgDQmrblv03q/cYsgsIBpZY3ffYvNukwcR1RkU4WPmpkfBAhmiaPZ4NNnVMuKxmTVx
+          89a0 +LBvhNn5BEyY6GUJusxjxJiaKNqgkX8gQpKzXpchlEWoSBPJ8Xgq8JKycHZWjLyr18WXQ/B/R2Rbw6C02N+2wKqxaXr0ZgMhsQJ4
+          014d M2C2uqfjHoaj/aIErWVjiF9fvmlRjQGnd6WJr41a5mmkcJ4kgzh49PjL70P5Cz6ELIq9lKz8/AjxZY+26DsnHQiBYLZUYchbeVnU
+          58a1 9narwO22iiwiEu5XxLkcW+ssp2ugYmKcm0KQcM61av5CrmB7k6oAY7CYOapVf/G1xYSbGsn6vSXCQhgfsSoV+Lx/KCT9+JJ+E4Bo
+          687d FcyGipmd2VuijlnSS1Jue94S1Jyyiwir4ysQxPRwQMUm0uuvDuvql6chmckRUfzXiRrA4Z0Z0HTsLf3YQksWsEW2/c5viEycuROz
+          bd7e U6a7iLdh16p80vzER/o00KDSUuxTjlpjQFfxe4+3UvqLE+9GNnpfQFl3RM9fFVK/y4QD66Nm1PCnbRPsyi12tmnSx7qY+G1UbN2x
+          e03b Io41+fumYLnyQVdWtJol6t3qpxO0OWFrQwdXJq7M5dYHmoi+Waq84mFjeNzKwhswVRwcKnXpZjs3vZgAIp76dEwKmoww+uEF3W/t
+          2090 FwORwzOkBldPO3LgBcl5gjIQGuUEkSPxB6UdDGIq3QF4FXt3JG6HyELNJJVAhPqDhzZpa02eX/5tZI60NygWEi1WJHwWmPOeCZMl
+          54dc Q++guMfFwvNIx3YQlVIdkfttCDwjyLu0/q4ZBsoIeDqYbQwZiCOXuX4nFgi4pUj4+2Umt89N8wKtmDbcPlCuVPqZx+v7btjc/t4M
+          43fc JjjGAFrVHUTBbBQqxZy6YOiFP3NoRu1v822GLISyU+sYbdhePN4hO/9RIX1IYqvNYaNG64XcruBf+HPvKDqn7qqERLhHoe42Nc/5
+          072c v/dj8ZUETOwdlXePvk+LcSPeO/HmAS1GEgGvPEuxQB/iwTaRHOIKjO7Znhpy9diSSo3iX4ntPhmu+732BkjBWuBnDvShFFmRLqaR
+          084f sovQg2iFyPGch58Ert3uDfPLd0TG+d3LDLi6kR/zZ97kMXAXmJpiuKVgHO91lzAD/m25RfSG0QO088b9IwC6T2n9da8I7bB3DWsT
+          1664 h14tfCDA6nCkPgTOvktBFATejC6aEnPqvRmqrGgfEe7ZVPjuNlIsiIKxOEKvcdROu1pNws7V3APT0tQ8Rim+guDh2os1F4mrCOd8
+          d859 KBdwisJUPA6Brd3vEZbIZp3Anz0Z9JY3UIaP3yuzgYUL8isn2tTTE8Ya455jmiDv6xQOczQTavUaX5jiCgRd86zMjeu/84mx6m68
+          d9ce f/1hWsTSCe9bcRSfJhzhV+CCITZmtdSVpsPAeoQFkVYrkZ+pNeyo4YLmikX5l3zrClqhASqoM59CJq5+XlC8siPnNS+4n4VgfqRw
+          1aa8 TOjQM71B8pfnVYYKkJ8Slp89mnqJvKPIOEBmbDXQZNnOWoRwCTY9j/PhRVp2bdwHNGrlEHzW7APH+DT32sx+sf0IAHofqPbwqj0W
+          20d5 2XAIDdYYPMiu6yJlzUcMMry66f3Nbqs5qGeMT4rRydEjh4CJnwSwm7p1GkL3tiiYa8TuVoOqdX398sQKgmRV4JxkVeCV894wzDly
+          a1c0 H8kNX9MXSRE64hwzrzqMBGRr0m5/qBgxUEcqnFKc2XbvekX+Qt87Ozsn9qAQ54Hywaz95qtv5TPk/miy5JiJjGZ+pG0GLoIrITfR
+          3343 sK3V3NXuK5CY6E6rPEyskXnGH/VqMoS+rt7lKeLb3A4fW9j9mBkZZvHmAzJqGWzTIY36cNQuaN/BSJNlE+UG0ZGbnBSsnKO8tx/d
+          4f56 boIhhkJrld0AQuq+jEhqqt548biw/B7TcMXQy2l2ewEBtsO3q7uK/jxXt0c5Od+sIy9YiFjR8gXQDxBdCtvkGriFu3JTlxqavrhq
+          0d38 sdZi8s7F8ZeyoaRGLqGh2FOpsxlaoR35UgabT8sqt/i2/wWayHBsl1FKpiwB53w7gr6ZhX/rgJQom3UtfDhhI0lXqEmSaC7a5CMI
+          80a8 +oiOVSaxV9hdhBmJX+hgC1is9kFeVNj6Dugi4MRy9V/l+d4qedjD6GEA7wZ6SEoc7oLeX8KYjJ3j8iM3ebXEa6TLKYrJy1zujKmU
+          f3ff iVpjoVRMhoi3oJlnA2uLd3rGGZed9T3OlnWUcicfdg54EmTP+1jIhK4ht0oemSoP0ExG3W3onVeiynpmD6A1iFtR9jIn7/Jey4We
+          c9e5 meltssQFktj5WzdK9ezH8oKNUDl5KCOBR4ai/pcFASyAWNDcIsF3DBKzadm6FEYXNhvlgmwUwGPDDXkt3uAKRUkkTck+ZUXAV6si
+          5a8b rOdNWk6z1dr8O7ySey5TRUtGBgVS6Qs3OOraxQ+0nYFnfdH0LVlfFgbNzIX87++sbr998gtwwBJCI4s7nKnHHBkKQECqe5O0cz9w
+          f71d DXtIIv//muE6V7j2b5DSH49yB8io/+0LnuToo4eglzza8Q400w5jGGTIcUZ4EzhW95utRw26uri7efb5aFPhQyHtZKe68woDJwDX
+          d3cd n/urNv17MQABrI4BgPAG1jMLB7HEZ/sCAAAAAARZWg==
+          B64
+          n=0; bad=0
+          while IFS= read -r l; do
+            n=$((n+1)); c="${l%% *}"; p="${l#* }"
+            [ "$(printf %s "$p" | md5sum | cut -c1-4)" = "$c" ] || { echo "ҚАТЕ: $n-жол дұрыс көшірілмеген" >&2; bad=1; }
+            printf %s "$p"
+          done < data.txt > b64.txt
+          [ "$bad" = 0 ] || exit 1
+          base64 -d b64.txt | tar xJ
 
       - name: Build debug APK
         working-directory: proj
